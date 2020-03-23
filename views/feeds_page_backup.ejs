@@ -83,7 +83,7 @@
                     <form method="POST", action= <%= a %> >
                     
                     <% 
-                    //console.logle.log(posts[curPost]);
+                    console.log(posts[curPost]);
                     const map1 = new Map();
                     if(map1.has(posts[curPost].feedId)){%>
                      <li class="active"><button class="custom-padding" name="like"  id="like" type="submit" value="Post"><i class="glyphicon glyphicon-thumbs-up" style="color:blue"></i> liked</a>
@@ -126,7 +126,7 @@
             </td>
         </tr>
     
-        <% if (posts[curPost].comments.length) { %>[cur]
+        <% if (posts[curPost].comments.length) { %>
             <% for(var curComment=0; curComment<posts[curPost].comments.length; curComment++) { %>
                 <tr><td><table class="post-comment-table">
                         <tr class="post-comment">

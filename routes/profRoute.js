@@ -4,7 +4,7 @@ const User = require('../model/User');
 const mongoose = require('mongoose');
 
 router.get('/', (req, res) => {
-    //console.logle.log('Profile page reached');
+    console.log('Profile page reached');
     res.render('../views/profile.ejs')
 });
 

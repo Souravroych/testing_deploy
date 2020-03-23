@@ -5,7 +5,7 @@ const bodyParser = require("body-parser");
 router.use(bodyParser.urlencoded({extended: true}));
 
 router.post('/', (req, res) => {
-  //console.logle.log(req.body);
+  console.log(req.body);
   res.send(req.body);
 });
 

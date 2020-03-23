@@ -45,6 +45,9 @@ const userSchema = new mongoose.Schema({
     },
     connection: {
         name: Array
+    },
+    image_src:{
+        type: String
     }
 });
 
