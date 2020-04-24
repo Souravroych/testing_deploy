@@ -37,18 +37,49 @@ router.post('/', async (req, res) => {
 })
 
 async function getAllPosts() {
-    var allPosts = await Feeds.find({});
+
+    var allPosts = []
+
+    var user_conn = await getAllConnectionInformation()
+    for (var i = 0; i < user_conn.length; i++) {
+        var temp_post = await Feeds.find({
+            author: user_conn[i].username
+        })
+        allPosts.push.apply(allPosts, temp_post)
+    }
+
+    var temp_post = await Feeds.find({
+        author: currentUserData.username
+    })
+    allPosts.push.apply(allPosts, temp_post)
+
     allPosts.sort(function (a, b) {
         return b["timestamp"] - a["timestamp"]
     });
 
-    console.log("Getting Comments");
     for (var curPost = 0; curPost < allPosts.length; curPost++) {
         var feedComments = await getAllComments(allPosts[curPost]["_id"]);
         allPosts[curPost].comments = feedComments;
     }
 
     return allPosts;
+}
+
+async function getAllConnectionInformation() {
+    const user = await User.findOne({
+        _id: currentUserID
+    });
+
+    user_dict = []
+    connection_list = user.connection.name
+    for (var i = 0; i < connection_list.length; i++) {
+        var user_conn = await User.findOne({
+            _id: connection_list[i]
+        });
+        user_dict.push(user_conn)
+
+    }
+    return user_dict
 }
 
 async function getAllComments(feedId) {
@@ -65,10 +96,54 @@ async function getAllComments(feedId) {
 }
 
 router.post('/idlogin', async (req, res) => {
-    console.log("Request body: ", req.body);
-
     sess = req.session;
     sess.body = req.body;
+
+
+
+    var users_connected = ['Khyati_10']
+    for (var emp = 0; emp < users_connected.length; emp++) {
+        var emp_full = users_connected[emp]
+        console.log(emp_full)
+        const to_add_connection = await User.findOne({
+            username: emp_full
+        });
+        var new_connection = ['5e95e282cffa7a7e93e88a5c']
+        var already_connection = to_add_connection.connection.name
+        var added_question = false
+        for (var k = 0; k < new_connection.length; k++) {
+            var i = new_connection[k]
+            if (i != to_add_connection._id) {
+                var exists = already_connection.includes(i)
+                if (!exists) {
+                    already_connection.push(i)
+                    added_question = true
+                }
+            }
+        }
+        if (added_question) {
+            User.findOneAndUpdate({
+                _id: to_add_connection._id
+            }, {
+                $set: {
+                    connection: {
+                        name: already_connection
+                    }
+                }
+            }, {
+                new: true
+            }, (err, doc) => {
+                if (err) {
+                    console.log("Something wrong when updating data!");
+                }
+
+                console.log(doc);
+            });
+        }
+    }
+
+
+
 
 
     //console.logle.log('Session initialized');
@@ -115,7 +190,7 @@ router.post('/idlogin', async (req, res) => {
 
     //console.logle.log("hghg", currentUserData);
     var map = new Map(); // only because unsued variables are part of humanity!
-
+    var connection_list = await getAllConnectionInformation()
     ////console.logle.log(map);
 
     //console.logle.log(map.has('5e2b3564e2b3124f1bbd9f4e'));
@@ -129,8 +204,11 @@ router.post('/idlogin', async (req, res) => {
     //console.logle.log("hjhjhj",userPosts);
 
 
+
+
     res.render('../views/feeds_page', {
         posts: userPosts,
+        connections: connection_list,
         map: map,
         user1: user
     });
@@ -229,7 +307,7 @@ router.post('/feedPost', async (req, res) => {
                 body: req.body.body,
                 count: 0,
                 com_count: 0,
-                love_count:0,
+                love_count: 0,
                 love_people: [],
                 retweet_edit_body: "",
                 retweet_edit_count: 0,
@@ -374,12 +452,15 @@ router.post('/feedPost', async (req, res) => {
 
     //console.logle.log('On feeds page');
     var posts = await getAllPosts();
+
+    var connection_list = await getAllConnectionInformation()
     //console.logle.log(posts,"oiooioi")
 
     userPosts = [currentUserData].concat(posts);
     //console.logle.log("yyy",userPosts);
     res.render('../views/feeds_page', {
-        posts: userPosts
+        posts: userPosts,
+        connections: connection_list
     });
 });
 
