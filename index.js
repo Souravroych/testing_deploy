@@ -35,4 +35,4 @@ app.use('/profile',profRoute);
 app.use('/login',require('./routes/loginRoute'));
 app.use('/login_s',require('./routes/loginSucc'));
 app.use('/', require('./routes/loginRoute'));
-app.listen(3000, () => console.log('Server running on 3000...'));
+app.listen(5000, () => console.log('Server running on 5000...'));

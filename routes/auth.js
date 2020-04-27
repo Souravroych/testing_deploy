@@ -2,6 +2,7 @@ const router = require('express').Router();
 const User = require('../model/User');
 const Feeds = require('../model/Feeds');
 const Comments = require('../model/Comments');
+const Notifications = require('../model/Notifications');
 const mongoose = require('mongoose');
 const bodyParser = require("body-parser");
 const bcrypt = require('bcryptjs');
@@ -53,12 +54,24 @@ async function getAllPosts() {
     })
     allPosts.push.apply(allPosts, temp_post)
 
+    var noti = await Notifications.find({})
+    for (var i = 0; i < noti.length; i++) {
+        if (user_conn.includes(noti[i].inconn_id) && !user_conn.includes(noti[i].outconn_id) && currentUserID!=noti[i].outconn_id) {
+            currentFeed = await Feeds.findById(noti.post_id)
+            currentFeed.timestamp = noti.timestamp
+            currentFeed.notification = noti.status
+            console.log(currentFeed)
+            allPosts.push.apply(allPosts, currentFeed)
+        }
+    }
+
+
     allPosts.sort(function (a, b) {
         return b["timestamp"] - a["timestamp"]
     });
 
     for (var curPost = 0; curPost < allPosts.length; curPost++) {
-        var feedComments = await getAllComments(allPosts[curPost]["_id"]);
+        var feedComments = await (allPosts[curPost]["_id"]);
         allPosts[curPost].comments = feedComments;
     }
 
@@ -101,46 +114,46 @@ router.post('/idlogin', async (req, res) => {
 
 
 
-    var users_connected = ['Khyati_10']
-    for (var emp = 0; emp < users_connected.length; emp++) {
-        var emp_full = users_connected[emp]
-        console.log(emp_full)
-        const to_add_connection = await User.findOne({
-            username: emp_full
-        });
-        var new_connection = ['5e95e282cffa7a7e93e88a5c']
-        var already_connection = to_add_connection.connection.name
-        var added_question = false
-        for (var k = 0; k < new_connection.length; k++) {
-            var i = new_connection[k]
-            if (i != to_add_connection._id) {
-                var exists = already_connection.includes(i)
-                if (!exists) {
-                    already_connection.push(i)
-                    added_question = true
-                }
-            }
-        }
-        if (added_question) {
-            User.findOneAndUpdate({
-                _id: to_add_connection._id
-            }, {
-                $set: {
-                    connection: {
-                        name: already_connection
-                    }
-                }
-            }, {
-                new: true
-            }, (err, doc) => {
-                if (err) {
-                    console.log("Something wrong when updating data!");
-                }
+    // var users_connected = ['Khyati_10']
+    // for (var emp = 0; emp < users_connected.length; emp++) {
+    //     var emp_full = users_connected[emp]
+    //     // console.log(emp_full)
+    //     const to_add_connection = await User.findOne({
+    //         username: emp_full
+    //     });
+    //     var new_connection = ['5e95e282cffa7a7e93e88a5c']
+    //     var already_connection = to_add_connection.connection.name
+    //     var added_question = false
+    //     for (var k = 0; k < new_connection.length; k++) {
+    //         var i = new_connection[k]
+    //         if (i != to_add_connection._id) {
+    //             var exists = already_connection.includes(i)
+    //             if (!exists) {
+    //                 already_connection.push(i)
+    //                 added_question = true
+    //             }
+    //         }
+    //     }
+    //     if (added_question) {
+    //         User.findOneAndUpdate({
+    //             _id: to_add_connection._id
+    //         }, {
+    //             $set: {
+    //                 connection: {
+    //                     name: already_connection
+    //                 }
+    //             }
+    //         }, {
+    //             new: true
+    //         }, (err, doc) => {
+    //             if (err) {
+    //                 console.log("Something wrong when updating data!");
+    //             }
 
-                console.log(doc);
-            });
-        }
-    }
+    //             console.log(doc);
+    //         });
+    //     }
+    // }
 
 
 
@@ -242,7 +255,7 @@ router.post('/feedPost', async (req, res) => {
             await currentFeed.save();
 
             const user = await User.findOne({
-                username: currentUserName
+                feedId: currentFeed.author
             });
 
 
@@ -253,8 +266,23 @@ router.post('/feedPost', async (req, res) => {
                 count: 0,
                 love_count: 0,
                 love_people: [],
-                author_img_src: user.image_src
+                author_img_src: user.image_src,
+                retweet_edit_body: "",
+                retweet_edit_count: 0
             });
+            
+            var status = currentUserName + "commented on "+user.username+"'s post."
+
+            const notify = new Notifications({
+                inconn_id: currentUserID,
+                outconn_id: user._id,
+                post_id: feedId,
+                comment: true,
+                like: false,
+                status:status
+            })
+            await notify.save();
+
             try {
                 console.log("Comment: ", feedId, " ", req.body.comment);
                 // console.log(newComment);
@@ -264,20 +292,43 @@ router.post('/feedPost', async (req, res) => {
             }
         }
 
-        if (req.body.love_com) {
-            console.log("This is America", req.body.love_com);
+        if (req.body.retweet_edit_body_comm) {
+            console.log("This is Sparta", req.body.retweet_edit_id_comm)
+            comment_grp = await Comments.findById(req.body.retweet_edit_id_comm);
+            comment_grp.retweet_edit_count++;
+            var author_user = comment_grp.author;
+            var author_image_src = comment_grp.author_img_src;
+            await comment_grp.save();
 
-            currentFeed = await Comments.findById(req.body.love_com);
+            var receiverName = currentUserName;
+            var find_image_src = await User.findById(currentUserID);
+            var receiver_image_src = find_image_src.image_src;
 
-            if (!currentFeed.love_people.includes(currentUserID)) {
-                currentFeed.love_count++;
-                currentFeed.love_people.push(currentUserID),
-                    await currentFeed.save();
+            //console.logle.log("lplplp");
+            const newFeed = new Feeds({
+                author: receiverName,
+                author_image: receiver_image_src,
+                receiver: author_user,
+                receiver_image: author_image_src,
+                body: req.body.body,
+                count: 0,
+                com_count: 0,
+                love_count: 0,
+                love_people: [],
+                retweet_edit_count: 0,
+                retweet_edit_body: req.body.retweet_edit_body_comm,
+                notification:""
+            });
+
+            try {
+                await newFeed.save();
+            } catch (err) {
+                res.status(400).send(err);
             }
         }
 
         if (req.body.retweet_edit_body) {
-            console.log("This is Sparta", req.body.retweet_edit_id)
+            console.log("This is India", req.body.retweet_edit_id)
 
             var receiverName = currentUserName;
 
@@ -311,7 +362,8 @@ router.post('/feedPost', async (req, res) => {
                 love_people: [],
                 retweet_edit_body: "",
                 retweet_edit_count: 0,
-                retweet_edit_body: req.body.retweet_edit_body
+                retweet_edit_body: req.body.retweet_edit_body,
+                notification:""
             });
 
             try {
@@ -354,7 +406,7 @@ router.post('/feedPost', async (req, res) => {
                 love_people: [],
                 retweet_edit_body: "",
                 retweet_edit_count: 0,
-
+                notification:""
             });
 
             await newFeed.save();
@@ -394,7 +446,8 @@ router.post('/feedPost', async (req, res) => {
                 com_count: 0,
                 love_people: [],
                 retweet_edit_body: "",
-                retweet_edit_count: 0
+                retweet_edit_count: 0,
+                notification:""
             });
 
             await newFeed.save();
@@ -403,6 +456,9 @@ router.post('/feedPost', async (req, res) => {
 
         if (req.body.love) {
             currentFeed = await Feeds.findById(feedId);
+            const user = await User.findOne({
+                username: currentFeed.author
+            });
 
             if (!currentFeed.love_people.includes(currentUserID)) {
                 currentFeed.love_count++;
@@ -410,10 +466,47 @@ router.post('/feedPost', async (req, res) => {
                     await currentFeed.save();
             }
 
+            var status = currentUserName + "liked "+user.username+"'s post."
 
-
-            //console.logle.log("love clicked");
+            const notify = new Notifications({
+                inconn_id: currentUserID,
+                outconn_id: user._id,
+                post_id: feedId,
+                comment: false,
+                like: true,
+                status:status
+            })
+            await notify.save();
         }
+
+        if (req.body.love_com) {
+            console.log("This is America", req.body.love_com);
+
+            currentFeed = await Comments.findById(req.body.love_com);
+
+            if (!currentFeed.love_people.includes(currentUserID)) {
+                currentFeed.love_count++;
+                currentFeed.love_people.push(currentUserID),
+                    await currentFeed.save();
+            }
+
+            const user = await User.findOne({
+                username: currentFeed.author
+            });
+
+            var status = currentUserName + "liked "+user.username+"'s comment."
+
+            const notify = new Notifications({
+                inconn_id: currentUserID,
+                outconn_id: user._id,
+                post_id: feedId,
+                comment: true,
+                like: true,
+                status:status
+            })
+            await notify.save();
+        }
+
     } else {
         //console.logle.log("newton");
         var receiverName = currentUserName;
@@ -440,7 +533,8 @@ router.post('/feedPost', async (req, res) => {
             com_count: 0,
             love_people: [],
             retweet_edit_body: "",
-            retweet_edit_count: 0
+            retweet_edit_count: 0,
+            notification:""
         });
 
         try {

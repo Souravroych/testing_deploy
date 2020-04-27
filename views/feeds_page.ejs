@@ -540,6 +540,8 @@
                                 </td>
                             </tr> -->
 
+
+
                                 <% if (posts[curPost].comments.length) { %>
                                 <% for(var curComment=0; curComment<posts[curPost].comments.length; curComment++) { %>
                                 <tr>
@@ -632,18 +634,160 @@
                                                                                 </div>
                                                                             </div>
                                                                         </div>
+
+
+
+
+
+
+
+
+
+
+
                                                                         <div class="col-md-4">
-                                                                            <button class="custom-padding tweet-buttons"
-                                                                                name="retweet_com" id="retweet_com"
-                                                                                type="submit" title="Retweet"
-                                                                                value=<%= posts[curPost].comments[curComment].author %>>
-                                                                                <div class="retweet-icon">
-                                                                                    <i class="fa fa-retweet"
-                                                                                        aria-hidden="true"></i></a>
-                                                                                    <%= posts[curPost].comments[curComment].count %>
+                                                                            <div class="btn-group dropleft">
+                                                                                <button
+                                                                                    class="custom-padding tweet-buttons dropright"
+                                                                                    name="edit" data-toggle="dropdown"
+                                                                                    title="Retweet/Retweet with comment"
+                                                                                    id=openmodal<%= posts[curPost]._id %>
+                                                                                    data-toggle="dropdown"
+                                                                                    aria-haspopup="true"
+                                                                                    aria-expanded="false" type="button">
+                                                                                    <div class="edit-icon">
+                                                                                        <i class="fa fa-twitter-square"
+                                                                                            aria-hidden="true"></i></a>
+                                                                                    </div>
+                                                                                </button>
+
+
+                                                                                <div class="dropdown-menu">
+                                                                                    <a class="dropdown-item" href="#"
+                                                                                        style="padding: 0;">
+                                                                                        <button
+                                                                                            class="custom-padding tweet-buttons"
+                                                                                            name="retweet_com"
+                                                                                            id="retweet_com"
+                                                                                            type="submit"
+                                                                                            title="Retweet"
+                                                                                            style="width: 100%"
+                                                                                            value=<%= posts[curPost].comments[curComment].author %>>
+                                                                                            <div class="retweet-icon">
+                                                                                                <i class="fa fa-retweet"
+                                                                                                    aria-hidden="true"></i>
+
+                                                                                                <%= posts[curPost].comments[curComment].count %>
+
+                                                                                        </button>
+                                                                                    </a>
+                                                                                    <a class="dropdown-item" href="#">
+                                                                                        <button
+                                                                                            class="custom-padding tweet-buttons"
+                                                                                            name="edit"
+                                                                                            data-toggle="modal"
+                                                                                            title="Retweet with comment"
+                                                                                            style="width: 100px;"
+                                                                                            data-target=#edit<%= posts[curPost].comments[curComment]._id %>
+                                                                                            type="button">
+
+
+
+                                                                                            <div class="edit-icon"
+                                                                                                style="padding: 0; background-color: transparent;">
+                                                                                                <i class="fa fa-share"
+                                                                                                    aria-hidden="true"></i>
+                                                                                                <%= posts[curPost].comments[curComment].retweet_edit_count %>
+
+
+                                                                                            </div>
+                                                                                        </button>
+                                                                                    </a>
                                                                                 </div>
-                                                                            </button>
+                                                                            </div>
                                                                         </div>
+
+                                                                        <div class="modal" id=edit<%= posts[curPost].comments[curComment]._id %>
+                                                                            tabindex="-1" role="dialog"
+                                                                            aria-labelledby="exampleModalLabel" aria-hidden="true">
+                                                                            <div class="modal-dialog" role="document">
+                                                                                <div class="modal-content">
+                                                                                    <div class="modal-header">
+                                                                                        <h5 class="modal-title"
+                                                                                            id="exampleModalLabel">
+                                                                                            Type your Tweet
+                                                                                        </h5>
+                                                                                        <button type="button" class="close"
+                                                                                            data-dismiss="modal" aria-label="Close">
+                                                                                            <span aria-hidden="true">&times;</span>
+                                                                                        </button>
+                                                                                    </div>
+                                                                                    <div class="modal-body">
+                                                                                        <textarea class="input-type-dec1"
+                                                                                            type="text" rows="2" cols="60"
+                                                                                            id="retweet_edit_body_comm"
+                                                                                            name="retweet_edit_body_comm"
+                                                                                            placeholder="Tweet"
+                                                                                            color:black></textarea>
+                                                                                        <br>
+                                                                                        <br>
+            
+            
+                                                                                        <div class="row">
+            
+                                                                                            <div class="col-md-12"
+                                                                                                style="padding-left: 30px;">
+            
+                                                                                                
+            
+                                                                                                <img src=<%= posts[curPost].comments[curComment].author_img_src %>
+                                                                                                    class="rounded-circle mr-3"
+                                                                                                    height="25px" width="25px" />
+                                                                                                <b>@<%= posts[curPost].comments[curComment].author %></b>
+            
+                                                                                            </div>
+            
+                                                                                            <div class="col-md-12">
+                                                                                                <div
+                                                                                                    class="comment-background p-2 pl-3 ml-5">
+                                                                                                    <%= posts[curPost].comments[curComment].body %>
+                                                                                                </div>
+                                                                                            </div>
+                                                                                        </div>
+            
+            
+                                                                                        <button class="btn-comment"
+                                                                                            name="retweet_edit_id_comm"
+                                                                                            id="retweet_edit_id_comm" type="submit"
+                                                                                            value=<%= posts[curPost].comments[curComment]._id %>>Tweet</button>
+                                                                                    </div>
+                                                                                    <div class="modal-footer">
+                                                                                        <button type="button"
+                                                                                            class="btn btn-secondary"
+                                                                                            data-dismiss="modal">Close</button>
+                                                                                    </div>
+                                                                                </div>
+                                                                            </div>
+                                                                        </div>
+
+
+
+
+
+
+
+
+
+
+
+
+
+<!--hash code-->
+
+
+
+
+                                                                        
                                                                         <div class="col-md-4">
                                                                             <button class="custom-padding tweet-buttons"
                                                                                 name="love_com" id="love_com"

@@ -34,6 +34,9 @@ const userSchema = new mongoose.Schema({
     retweet_edit_count: {
         type: Number
     },
+    notification: {
+        type: String
+    },
     timestamp: {
         type: Date,
         default: Date.now
