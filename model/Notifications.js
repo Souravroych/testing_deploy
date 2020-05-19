@@ -1,14 +1,17 @@
 const mongoose = require('mongoose');
 
-const userSchema = new mongoose.Schema({
+const notificationSchema = new mongoose.Schema({
     inconn_id:{
-        type: String
+        type: mongoose.Types.ObjectId,
+        ref: "user"
     },
     outconn_id:{
-        type: String
+        type: mongoose.Types.ObjectId,
+        ref: "user"
     },
     post_id: {
-        type: String,
+        type: mongoose.Types.ObjectId,
+        ref: "Feeds"
     },
     comment: {
         type: Boolean
@@ -25,4 +28,4 @@ const userSchema = new mongoose.Schema({
     }
 });
 
-module.exports = mongoose.model('Notifications', userSchema, 'notifications');
+module.exports = mongoose.model('Notifications', notificationSchema, 'notifications');

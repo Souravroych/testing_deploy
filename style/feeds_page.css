@@ -45,7 +45,7 @@
     border-style: ridge;
 }
 
-.btn-primary {
+.post-btn {
     float: left;
     /* margin-left: 1000px;*/
     margin-right: 600px;
@@ -341,4 +341,12 @@ body {
     color: rgba(52, 152, 219, 1);
     background-color: rgba(52, 152, 219, 0.1);
 
+}
+.feedNotification {
+    font-size: 14px;
+    color: gray;
+}
+.postTimestamp {
+    font-size: 12px;
+    color: gray;
 }
