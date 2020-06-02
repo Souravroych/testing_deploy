@@ -4,24 +4,34 @@ const bcrypt = require('bcryptjs');
 const User = require('../model/User');
 const Feeds = require('../model/Feeds');
 const Notifications = require('../model/Notifications');
+const Comments = require('../model/Comments');
 
 const validation = require('../validation');
 
 var currentUserID;
 
-async function getAllPosts() {
+async function getAllPosts(userID) {
+
     var allPosts = []
+    var feedNotifications = [];
+
     var user_conn = await getAllConnectionInformation()
     for (var i = 0; i < user_conn.length; i++) {
         var temp_post = await Feeds.find({
-            author: user_conn[i].username
-        })
+            author: user_conn[i].username,
+        }).populate('author_id', 'name username email').populate('receiver_id')
+
         allPosts.push.apply(allPosts, temp_post)
     }
 
+    let entireFeeds = await Feeds.find({ 'feedNotification.users': { $in: [userID] } })
+        .populate('feedNotification.userId')
+        .populate('author_id', 'name username email')
+
     var temp_post = await Feeds.find({
         author: currentUserData.username
-    })
+    }).populate('receiver_id').populate('author_id', 'name username email')
+
     allPosts.push.apply(allPosts, temp_post)
 
     var noti = await Notifications.find({})
@@ -35,34 +45,52 @@ async function getAllPosts() {
         }
     }
 
-    allPosts.sort(function (a, b) {
-        return b["timestamp"] - a["timestamp"]
-    });
-
     for (var curPost = 0; curPost < allPosts.length; curPost++) {
         var feedComments = await (allPosts[curPost]["_id"]);
         allPosts[curPost].comments = feedComments;
     }
 
+    allPosts = allPosts.concat(entireFeeds);
+
+    allPosts.sort(function (a, b) {
+        return b["timestamp"] - a["timestamp"]
+    });
+
     return allPosts;
 }
 
-async function getAllConnectionInformation() {
-    const user = await User.findOne({
-        _id: currentUserID
-    });
-
-    user_dict = []
-    connection_list = user.connection.name;
-
-    for (var i = 0; i < connection_list.length; i++) {
-        var user_conn = await User.findOne({
-            _id: connection_list[i]
+function getAllConnectionInformation() {
+    function removeDuplicates(arr) {
+        const uniqueArray = arr.filter((thing, index) => {
+            const _thing = JSON.stringify(thing);
+            return index === arr.findIndex(obj => {
+                return JSON.stringify(obj) === _thing;
+            });
         });
-        user_dict.push(user_conn)
-
+        return uniqueArray;
     }
-    return user_dict
+
+    return new Promise(async (res, rej) => {
+        let allConnections = [];
+        let itemsProcessed = 0;
+        const user = await User.findById(currentUserID);
+        let group_ids = user.group_id;
+
+        group_ids.forEach(async (group_id, index, array) => {
+            let group_users = await User.find({ "group_id": { $in: [group_id] } }).exec();
+            group_users = group_users.filter(u => JSON.stringify(u._id) != JSON.stringify(user._id));
+            allConnections.push(...group_users);
+            itemsProcessed++;
+            if (itemsProcessed == array.length) {
+                callback();
+            }
+        });
+
+        function callback() {
+            allConnections = removeDuplicates(allConnections);
+            res(allConnections);
+        }
+    });
 }
 
 module.exports.getProfile = (req, res) => {
@@ -86,7 +114,6 @@ module.exports.updateProfile = async (req, res) => {
     const { name, username, email, location, bio } = req.body;
 
     const validationResult = validation.updateProfile(req.body);
-    console.log(validationResult)
 
     if (validationResult.error) {
         req.flash('profileMessage', validationResult.error.details[0].message)
@@ -114,18 +141,11 @@ module.exports.updateProfile = async (req, res) => {
 
 module.exports.getNotifications = (req, res) => {
     let user = req.user;
-    if (!user) {
-        return res.redirect('/');
-    }
-
     Notifications.find({
         outconn_id: user._id
     })
         .populate('inconn_id')
         .then(notifications => {
-
-            console.log("Notificaitons");
-            console.log(notifications)
 
             res.render('../views/notifications.ejs', {
                 user: req.user,
@@ -152,28 +172,58 @@ module.exports.getFeeds = async (req, res) => {
             bio: user.bio,
             location: user.location,
             connection: user.connection,
-            image_src: user.image_src
+            image_src: user.profile_pic
         };
         currentUserID = user._id;
 
-        var posts = await getAllPosts();
+        var posts = await getAllPosts(user._id);
         userPosts = [currentUserData].concat(posts);
 
         var map = new Map();
         var connection_list = await getAllConnectionInformation();
 
-        console.log("Connections");
-        console.log(connection_list)
+        var itemsProcessed = 0;
+        let nPosts = [];
 
-        res.render('../views/feeds_page', {
-            user: user,
-            posts: userPosts,
-            connections: connection_list,
-            suggestions: JSON.stringify(connection_list),
-            map: map,
-            user1: user,
-            moment
+        userPosts = userPosts.map((post, index, array) => {
+            if (post._id) {
+                Comments.find({
+                    feedId: post._id
+                }).populate('author_id').exec().then(comments => {
+                    nPosts.push({ ...post._doc, comments })
+                    itemsProcessed++;
+                    if (itemsProcessed === array.length) {
+                        callback();
+                    }
+                })
+            } else {
+                nPosts.push({ ...post, comments: [] })
+                itemsProcessed++;
+                if (itemsProcessed === array.length) {
+                    callback();
+                }
+            }
         });
+
+        function callback() {
+
+            nPosts.sort(function (a, b) {
+                return b["timestamp"] - a["timestamp"]
+            });
+
+            res.render('../views/feeds_page', {
+                user: user,
+                posts: nPosts,
+                connections: connection_list,
+                suggestions: JSON.stringify(connection_list),
+                map: map,
+                user1: user,
+                moment
+            });
+
+
+
+        }
 
     } catch (err) {
         console.log(err);
