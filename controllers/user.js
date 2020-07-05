@@ -1,62 +1,128 @@
 const moment = require('moment');
 const bcrypt = require('bcryptjs');
+const bonsole = require('bonsole');
 
 const User = require('../model/User');
 const Feeds = require('../model/Feeds');
 const Notifications = require('../model/Notifications');
 const Comments = require('../model/Comments');
-
 const validation = require('../validation');
+const utils = require('./../utils');
 
 var currentUserID;
 
 async function getAllPosts(userID) {
 
-    var allPosts = []
-    var feedNotifications = [];
+    return new Promise(async (res, rej) => {
 
-    var user_conn = await getAllConnectionInformation()
-    for (var i = 0; i < user_conn.length; i++) {
+        var allPosts = []
+        var feedNotifications = [];
+        var user_conn = await getAllConnectionInformation()
+
+        for (var i = 0; i < user_conn.length; i++) {
+            var temp_post = await Feeds.find({
+                user_id: user_conn[i].user_id,
+                //post_type: { $ne: "reply" }
+            }).populate('parent_id');
+
+            allPosts.push.apply(allPosts, temp_post);
+        }
+
+
+
+        //allPosts.push([...all_replys]);
+
+
+
+        let user = await User.findById(userID);
+
+        let entireFeeds = await Feeds.find({ 'visible_to.users': { $in: [user.user_id] } })
+            .populate('parent_id')
+            .populate('visible_to.userId')
+            .populate('author_id', 'name username email')
+
         var temp_post = await Feeds.find({
-            author: user_conn[i].username,
-        }).populate('author_id', 'name username email').populate('receiver_id')
+            user_id: currentUserData.user_id,
+            //post_type: { $ne: "reply" }
+        }).populate('parent_id');
 
         allPosts.push.apply(allPosts, temp_post)
-    }
 
-    let entireFeeds = await Feeds.find({ 'feedNotification.users': { $in: [userID] } })
-        .populate('feedNotification.userId')
-        .populate('author_id', 'name username email')
-
-    var temp_post = await Feeds.find({
-        author: currentUserData.username
-    }).populate('receiver_id').populate('author_id', 'name username email')
-
-    allPosts.push.apply(allPosts, temp_post)
-
-    var noti = await Notifications.find({})
-    for (var i = 0; i < noti.length; i++) {
-        if (user_conn.includes(noti[i].inconn_id) && !user_conn.includes(noti[i].outconn_id) && currentUserID != noti[i].outconn_id) {
-            currentFeed = await Feeds.findById(noti.post_id)
-            currentFeed.timestamp = noti.timestamp
-            currentFeed.notification = noti.status
-            console.log(currentFeed)
-            allPosts.push.apply(allPosts, currentFeed)
+        var noti = await Notifications.find({})
+        for (var i = 0; i < noti.length; i++) {
+            if (user_conn.includes(noti[i].inconn_id) && !user_conn.includes(noti[i].outconn_id) && currentUserID != noti[i].outconn_id) {
+                currentFeed = await Feeds.findById(noti.post_id)
+                currentFeed.timestamp = noti.timestamp
+                currentFeed.notification = noti.status
+                allPosts.push.apply(allPosts, currentFeed)
+            }
         }
-    }
 
-    for (var curPost = 0; curPost < allPosts.length; curPost++) {
-        var feedComments = await (allPosts[curPost]["_id"]);
-        allPosts[curPost].comments = feedComments;
-    }
+        for (var curPost = 0; curPost < allPosts.length; curPost++) {
+            var feedComments = await (allPosts[curPost]["_id"]);
+            allPosts[curPost].comments = feedComments;
+        }
 
-    allPosts = allPosts.concat(entireFeeds);
+        allPosts = allPosts.concat(entireFeeds);
 
-    allPosts.sort(function (a, b) {
-        return b["timestamp"] - a["timestamp"]
+        let all_replys = await Feeds.find({
+            post_type: "reply"
+        }).populate('parent_id');
+
+        allPosts = allPosts.concat(all_replys);
+
+        allPosts = removeDups(allPosts, "_id");
+
+        allPosts.sort(function (a, b) {
+            return b["created_at"] - a["created_at"]
+        });
+
+        let postsProcessed = 0;
+        let processedPosts = [];
+
+
+        allPosts.forEach(async (post, index, array) => {
+            let postUser = await User.findOne({ user_id: post.user_id });
+            postsProcessed++;
+            processedPosts.push({ ...post._doc, user_id: postUser });
+            if (postsProcessed == array.length) {
+                callback();
+            }
+        });
+
+        function callback() {
+            res(removeDuplicates(processedPosts));
+        }
+
+        if (allPosts.length == 0) {
+            res(removeDuplicates(processedPosts));
+        }
+
     });
 
-    return allPosts;
+    function removeDuplicates(arr) {
+        const uniqueArray = arr.filter((thing, index) => {
+            const _thing = JSON.stringify(thing);
+            return index === arr.findIndex(obj => {
+                return JSON.stringify(obj) === _thing;
+            });
+        });
+        return uniqueArray;
+    }
+}
+
+function removeDups(originalArray, prop) {
+    var newArray = [];
+    var lookupObject = {};
+
+    for (var i in originalArray) {
+        lookupObject[originalArray[i][prop]] = originalArray[i];
+    }
+
+    for (i in lookupObject) {
+        newArray.push(lookupObject[i]);
+    }
+    return newArray;
 }
 
 function getAllConnectionInformation() {
@@ -93,26 +159,34 @@ function getAllConnectionInformation() {
     });
 }
 
-module.exports.getProfile = (req, res) => {
+module.exports.getProfile = async (req, res) => {
     let user = req.user;
     let data = [];
+
+    let notificationCount = await Notifications.find({
+        outconn_id: user._id,
+        seen: false
+    }).countDocuments();
+
     data = req.flash('form');
     if (!user) {
         return res.redirect('/');
     }
     res.render('../views/user-profile.ejs', {
         user: user,
-        pageTitle: "User Profile",
+        pageTitle: "Profile",
         message: req.flash('message'),
         profileMessage: req.flash('profileMessage'),
         form: data,
-        pform: req.flash('pform')
+        notificationCount,
+        notificationViewed: req.session.notificationViewed,
+        pform: req.flash('pform'),
+        path: "users/profile"
     })
 }
 
 module.exports.updateProfile = async (req, res) => {
     const { name, username, email, location, bio } = req.body;
-
     const validationResult = validation.updateProfile(req.body);
 
     if (validationResult.error) {
@@ -138,31 +212,41 @@ module.exports.updateProfile = async (req, res) => {
     }
 }
 
+module.exports.getNotifications = async (req, res) => {
+    req.session.notificationViewed = true;
 
-module.exports.getNotifications = (req, res) => {
     let user = req.user;
-    Notifications.find({
-        outconn_id: user._id
-    })
-        .populate('inconn_id')
-        .then(notifications => {
 
-            res.render('../views/notifications.ejs', {
-                user: req.user,
-                notifications: notifications,
-                pageTitle: "Notifications",
-                moment
-            });
-        }).catch(err => {
-            console.log(err);
-            let error = new Error("Something went wrong");
-            next(error);
-        })
+    try {
+        let notifications = await Notifications.find({
+            outconn_id: user._id
+        }).populate('inconn_id').sort({ timestamp: -1 });
+
+        //Update Notification to seen
+        notifications.forEach(notification => {
+            notification.seen = true;
+            notification.save();
+        });
+
+        return res.render('../views/notifications.ejs', {
+            user: req.user,
+            notifications: notifications,
+            pageTitle: "Notifications",
+            moment,
+            notificationCount: notifications.length,
+            notificationViewed: req.session.notificationViewed,
+            path: "users/notifications"
+        });
+
+    } catch (err) {
+        console.log(err);
+        let error = new Error("Something went wrong");
+        next(error);
+    }
 }
 
-module.exports.getFeeds = async (req, res) => {
+module.exports.getFeeds = async (req, res, next, path = null) => {
     let user = req.user;
-
     if (!user) return res.redirect('/');
 
     try {
@@ -172,11 +256,21 @@ module.exports.getFeeds = async (req, res) => {
             bio: user.bio,
             location: user.location,
             connection: user.connection,
-            image_src: user.profile_pic
+            image_src: user.profile_pic,
+            user_id: user.user_id
         };
         currentUserID = user._id;
 
+        //Notification Count
+        let notificationCount = await Notifications.find({
+            outconn_id: user._id,
+            seen: false
+        }).countDocuments();
+
         var posts = await getAllPosts(user._id);
+
+        // posts = removeDups(posts, "_id");
+
         userPosts = [currentUserData].concat(posts);
 
         var map = new Map();
@@ -184,18 +278,84 @@ module.exports.getFeeds = async (req, res) => {
 
         var itemsProcessed = 0;
         let nPosts = [];
+        let replys = [];
 
-        userPosts = userPosts.map((post, index, array) => {
+        userPosts = userPosts.map(async (post, index, array) => {
             if (post._id) {
-                Comments.find({
-                    feedId: post._id
+                /*let commentUser = await User.findOne({ user_id: post.user_id.user_id });
+
+                Feeds.find({
+                    parent_id: post._id,
+                    post_type: "reply"
                 }).populate('author_id').exec().then(comments => {
-                    nPosts.push({ ...post._doc, comments })
+                    nPosts.push({
+                        ...post, comments: comments.map(comment => {
+                            return { ...comment._doc, user_id: commentUser._doc }
+                        })
+                    })
+
                     itemsProcessed++;
                     if (itemsProcessed === array.length) {
                         callback();
                     }
-                })
+                })*/
+
+                /* if (post.post_type != "reply") {
+                     nPosts.push({ ...post, comments: [] })
+                     itemsProcessed++;
+                     if (itemsProcessed === array.length) {
+                         callback();
+                     }
+                 } else if (post.parent_id && post.parent_id.reply_count > 0) {
+                     replys.push({ ...post, comments: [] });
+                     itemsProcessed++;
+                     if (itemsProcessed === array.length) {
+                         callback();
+                     }
+                 } else {
+                     replys.push({ ...post, comments: [] });
+                     itemsProcessed++;
+                     if (itemsProcessed === array.length) {
+                         callback();
+                     }
+                 }*/
+
+                if (post.post_type == "reply") {
+                    replys.push({ ...post, comments: [] });
+                    itemsProcessed++;
+                    if (itemsProcessed === array.length) {
+                        callback();
+                    }
+
+                } /*else if (post.post_type == "retweet") {
+                    let rp = await Feeds.find({ parent_id: post.parent_id, post_type: "reply" }).populate('parent_id').sort({ created_at: 'desc' });
+                    rp.forEach(async (r, index) => {
+                        let p_parent_id = { ...rp[index].parent_id._doc, _id: post._id };
+                       
+
+                        let pUser = await User.findOne({ user_id: r.parent_id.user_id });
+                      
+
+                        let p = { ...rp[index]._doc, parent_id: p_parent_id, user_id: pUser }
+
+                        replys.push({ ...p, comments: [] })
+                    })
+
+                    nPosts.push({ ...post, comments: [] })
+                    itemsProcessed++;
+                    if (itemsProcessed === array.length) {
+                        callback();
+                    }
+
+                }*/ else {
+                    nPosts.push({ ...post, comments: [] })
+                    itemsProcessed++;
+                    if (itemsProcessed === array.length) {
+                        callback();
+                    }
+                }
+
+
             } else {
                 nPosts.push({ ...post, comments: [] })
                 itemsProcessed++;
@@ -205,24 +365,125 @@ module.exports.getFeeds = async (req, res) => {
             }
         });
 
-        function callback() {
 
-            nPosts.sort(function (a, b) {
-                return b["timestamp"] - a["timestamp"]
+        function callback() {
+            setTimeout(() => {
+                replys.forEach((reply, index) => {
+                    let post = nPosts.filter(post => {
+                        return JSON.stringify(post._id) == JSON.stringify(reply.parent_id._id)
+                    })
+                    post = post[0];
+                    if (post) {
+                        let index = nPosts.findIndex(p => p == post);
+                        nPosts[index] = { ...post, comments: post.comments.concat(reply) }
+                    }
+                });
+
+                let finalPostProcessed = 0;
+                let uPosts = [];
+
+                nPosts.forEach(async (post, index, array) => {
+                    if (post.parent_id) {
+                        let p = await Feeds.findById(post.parent_id);
+                        let user = await User.findOne({ user_id: p.user_id })
+                        if (user) {
+                            uPosts.push({ ...post, parent_id: { ...p._doc, user_id: user } });
+                        }
+                        finalPostProcessed++;
+                        if (finalPostProcessed == array.length) {
+                            renderScreen(uPosts);
+                        }
+                    } else {
+                        uPosts.push({ ...post });
+                        finalPostProcessed++;
+                        if (finalPostProcessed == array.length) {
+                            renderScreen(uPosts);
+                        }
+                    }
+                });
+
+            }, 1500)
+
+            //nPosts = [currentUserData].concat(nPosts);
+
+            /*let finalPostProcessed = 0;
+            let uPosts = [];
+            nPosts.forEach(async (post, index, array) => {
+                if (post.parent_id) {
+
+                    let p = await Feeds.findById(post.parent_id);
+                    let user = await User.findOne({ user_id: p.user_id })
+                    if (user) {
+                        uPosts.push({ ...post, parent_id: { ...p._doc, user_id: user } });
+                    }
+                    finalPostProcessed++;
+                    if (finalPostProcessed == array.length) {
+                        renderScreen(uPosts);
+                    }
+                } else {
+                    uPosts.push({ ...post });
+                    finalPostProcessed++;
+                    if (finalPostProcessed == array.length) {
+                        renderScreen(uPosts);
+                    }
+                }
+            });*/
+        }
+
+        function renderScreen(uPosts) {
+            uPosts = uPosts.map(p => {
+
+                //Copy Original post's comments to retweeted post.
+                if (p.post_type == 'retweet') {
+                    let PIndex = uPosts.findIndex(pst => JSON.stringify(p.parent_id._id) == JSON.stringify(pst._id));
+                    if (PIndex > -1)
+                        return { ...p, 'post_order': p.created_at, comments: uPosts[PIndex].comments }
+                }
+                return { ...p, 'post_order': p.created_at }
+            })
+
+
+            if (req.session.activityPost) {
+                let index = uPosts.findIndex(p => JSON.stringify(p._id) == JSON.stringify(req.session.activityPost))
+
+                if (index >= 0)
+                    uPosts[index].post_order = Date.now();
+            }
+
+            uPosts.sort(function (a, b) {
+                return b["post_order"] - a["post_order"]
             });
+
+
+            /*if (req.session.newCommentFeed) {
+                let index = uPosts.findIndex(i => i._id == req.session.newCommentFeed);
+                arraymove(uPosts, index, 1);
+            }*/
+
+            // let first = uPosts[0];
+            // uPosts = uPosts.filter(post => {
+            //     return post.comments.length > 0;
+            // });
+            // uPosts.unshift(first);
+
+            // if (req.session.newPostMade)
+            //     global.nsp.emit('new-post', uPosts[1]);
+
+            // req.session.newPostMade = false;
 
             res.render('../views/feeds_page', {
                 user: user,
-                posts: nPosts,
+                posts: uPosts,
                 connections: connection_list,
                 suggestions: JSON.stringify(connection_list),
                 map: map,
                 user1: user,
-                moment
+                notificationCount,
+                notificationViewed: req.session.notificationViewed,
+                moment,
+                path: path ? path : "users/home",
+                pageTitle: "Feeds"
             });
-
-
-
         }
 
     } catch (err) {
@@ -232,9 +493,12 @@ module.exports.getFeeds = async (req, res) => {
     }
 }
 
+module.exports.getHome = (req, res, next) => {
+    this.getFeeds(req, res, next, "users/home");
+}
+
 module.exports.resetPassword = async (req, res, next) => {
     const { currentPassword, newPassword, cnewPassword } = req.body;
-
     const validationResult = validation.resetPassword(req.body);
 
     if (validationResult.error) {
@@ -245,7 +509,6 @@ module.exports.resetPassword = async (req, res, next) => {
 
     try {
         let isMatch = await bcrypt.compare(currentPassword, req.user.password);
-        console.log(isMatch)
         if (isMatch) {
             let salt = await bcrypt.genSalt(10);
             const hashPassword = await bcrypt.hash(newPassword, salt);
@@ -265,5 +528,4 @@ module.exports.resetPassword = async (req, res, next) => {
         req.flash('message', 'Something has went wrong')
         res.redirect('profile')
     }
-
 }

@@ -1,8 +1,6 @@
-const mongoose = require('mongoose');
 const router = require('express').Router();
 const bodyParser = require("body-parser");
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const moment = require('moment');
 
 const User = require('../model/User');
@@ -11,10 +9,11 @@ const Comments = require('../model/Comments');
 const Notifications = require('../model/Notifications');
 const Group = require('./../model/Group');
 const authController = require('./../controllers/auth');
+const Logger = require('./../model/Logger');
+const utils = require('./../utils');
 
 const {
     firstLoginValidation,
-    registerValidation,
     loginValidation
 } = require('../validation');
 const session = require('express-session');
@@ -37,6 +36,7 @@ router.use(bodyParser.urlencoded({
 
 // var cart = [{postBody: req.body.myTextarea}];
 var sess;
+let newComment = null;
 
 async function getAllPosts(userID) {
 
@@ -52,9 +52,9 @@ async function getAllPosts(userID) {
         allPosts.push.apply(allPosts, temp_post)
     }
 
-    let entireFeeds = await Feeds.find({ 'feedNotification.users': { $in: [userID] } })
-        .populate('feedNotification.userId')
-        .populate('author_id', 'name username email')
+    let entireFeeds = await Feeds.find({ 'visible_to.users': { $in: [userID] } })
+    //.populate('visible_to.userId')
+    //.populate('author_id', 'name username email')
 
     var temp_post = await Feeds.find({
         author: currentUserData.username
@@ -68,7 +68,6 @@ async function getAllPosts(userID) {
             currentFeed = await Feeds.findById(noti.post_id)
             currentFeed.timestamp = noti.timestamp
             currentFeed.notification = noti.status
-            console.log(currentFeed)
             allPosts.push.apply(allPosts, currentFeed)
         }
     }
@@ -100,7 +99,7 @@ async function getAllPosts(userID) {
     allPosts = allPosts.concat(entireFeeds);
 
     allPosts.sort(function (a, b) {
-        return b["timestamp"] - a["timestamp"]
+        return b["created_at"] - a["created_at"]
     });
 
     return allPosts;
@@ -202,9 +201,6 @@ router.post('/idlogin', async (req, res) => {
                 return b["timestamp"] - a["timestamp"]
             });
 
-            console.log("ALL POSTS FIRST POST");
-            console.log(nPosts[1])
-
             res.render('../views/feeds_page', {
                 posts: nPosts,
                 connections: connection_list,
@@ -225,7 +221,7 @@ router.post('/idlogin', async (req, res) => {
     // var users_connected = ['Khyati_10']
     // for (var emp = 0; emp < users_connected.length; emp++) {
     //     var emp_full = users_connected[emp]
-    //     // console.log(emp_full)
+
     //     const to_add_connection = await User.findOne({
     //         username: emp_full
     //     });
@@ -257,37 +253,19 @@ router.post('/idlogin', async (req, res) => {
     //             if (err) {
     //                 console.log("Something wrong when updating data!");
     //             }
-
-    //             console.log(doc);
     //         });
     //     }
     // }
 
-
-    //console.logle.log('Session initialized');
-
-    //console.logle.log(user,"klkl");
-
     // const pass1=await bcrypt.hash(req.body.pass, salt);
     //  if(!user) return res.status(400).send('ID code not found!');
-    //  //console.logle.log(pass1);
-    //  //console.logle.log(user.password);
     // if(user.password.toString() === pass1.toString())
 
-    //console.logle.log("hghg", currentUserData);
-
-    ////console.logle.log(map);
-
-    //console.logle.log(map.has('5e2b3564e2b3124f1bbd9f4e'));
     //CREATE A TOKEN
     // const token = jwt.sign({_id: user._id}, process.env.TOKEN_SECRET);
     // res.header('auth_token', token).send(token);
 
     // Get All posts
-
-    //console.logle.log("hjhjhj",userPosts);
-
-
     // else{
     // return res.status(400).send('userid/password  not correct!');	
 
@@ -305,30 +283,68 @@ router.post('/feedPost', async (req, res, next) => {
     var userPosts = [];
     var nPosts = [];
 
+    currentUserName = req.user.username;
+    currentUserID = req.user._id;
+
+    currentUserData = {
+        username: req.user.username,
+        name: req.user.name,
+        bio: req.user.bio,
+        location: req.user.location,
+        connection: req.user.connection,
+        image_src: req.user.profile_pic,
+        user_id: req.user.user_id
+    };
+
     if (feedId) {
         //COMMENT/REPLY ON POST
-        if (req.body.comment) {
-
+        if (req.body.comment || req.file) {
             currentFeed = await Feeds.findById(feedId);
-            currentFeed.timestamp = +new Date();
+
+            if (currentFeed.post_type == "retweet") {
+                currentFeed = await Feeds.findById(currentFeed.parent_id);
+            }
+
+            req.session.newCommentFeed = feedId;
+            //currentFeed.created_at = +new Date();
             currentFeed.com_count++;
+            currentFeed.reply_count++;
             await currentFeed.save();
 
+            req.session.activityPost = currentFeed._id;
+
             const user = await User.findOne({
-                username: currentFeed.author
+                user_id: currentFeed.user_id
             });
 
-            const newComment = new Comments({
-                feedId: feedId,
-                author: currentUserName,
-                author_id: req.user,
+            // const newComment = new Comments({
+            //     feedId: feedId,
+            //     author: currentUserName,
+            //     author_id: req.user,
+            //     body: req.body.comment,
+            //     count: 0,
+            //     love_count: 0,
+            //     love_people: [],
+            //     author_img_src: req.user ? req.user.profile_pic : "",
+            //     retweet_edit_body: "",
+            //     retweet_edit_count: 0
+            // });
+
+            const newFeed = new Feeds({
+                user_id: currentUserData.user_id,
                 body: req.body.comment,
-                count: 0,
-                love_count: 0,
-                love_people: [],
-                author_img_src: req.user ? req.user.profile_pic : "",
-                retweet_edit_body: "",
-                retweet_edit_count: 0
+                created_at: +new Date(),
+                liked_by: [],
+                like_count: 0,
+                retweet_count: 0,
+                reply_count: 0,
+                quote_count: 0,
+                post_type: "reply",
+                parent_id: currentFeed._id,
+                conversation_id: currentFeed.conversation_id,
+                mentions: [],
+                visible_to: { users: [] },
+                image: req.file ? req.file.location : "null",
             });
 
             var status = currentUserName + " commented on " + user.username + "'s post."
@@ -337,16 +353,15 @@ router.post('/feedPost', async (req, res, next) => {
                 inconn_id: currentUserID,
                 outconn_id: user._id,
                 post_id: feedId,
-                comment: true,
-                like: false,
+                activity: "comment",
+                seen: false,
                 status: status
             })
             await notify.save();
 
             try {
-                await newComment.save();
+                await newFeed.save();
             } catch (err) {
-                console.log(err);
                 let error = new Error("Something went wrong");
                 next(error);
             }
@@ -354,12 +369,13 @@ router.post('/feedPost', async (req, res, next) => {
 
         // RETWEET COMMENT WITH TEXT
         if (req.body.retweet_edit_body_comm) {
-            console.log("This is Sparta", req.body.retweet_edit_id_comm)
-            comment_grp = await Comments.findById(req.body.retweet_edit_id_comm);
-            comment_grp.retweet_edit_count++;
-            var author_user = comment_grp.author;
-            var author_image_src = comment_grp.author_img_src;
-            await comment_grp.save();
+            currentFeed = await Feeds.findById(req.body.retweet_edit_id_comm);
+            currentFeed.quote_count++;
+            var author_user = currentFeed.author;
+            var author_image_src = currentFeed.author_img_src;
+            await currentFeed.save();
+            req.session.activityPost = currentFeed._id;
+
 
             var receiverName = currentUserName;
             var find_image_src = await User.findById(currentUserID);
@@ -367,20 +383,35 @@ router.post('/feedPost', async (req, res, next) => {
 
             let recieverUser;
 
-            const user = await User.findOne({
+            /*const user = await User.findOne({
                 username: author_user
             });
             if (!user) return res.status(400).send('Receiver not found!');
-            recieverUser = user;
+            recieverUser = user;*/
 
             const newFeed = new Feeds({
+
+                user_id: req.user.user_id,
+                body: req.body.retweet_edit_body_comm,
+                created_at: Date.now(),
+                liked_by: 0, //currentFeed.liked_by,
+                like_count: 0, //currentFeed.like_count,
+                retweet_count: 0, //currentFeed.retweet_count,
+                reply_count: 0, //currentFeed.reply_count,
+                quote_count: 0, //currentFeed.quote_count,
+                post_type: "quote",
+                parent_id: currentFeed._id,
+                conversation_id: currentFeed.conversation_id,
+                mentions: currentFeed.mentions,
+                visible_to: currentFeed.visible_to,
+
                 author: receiverName,
                 author_image: receiver_image_src,
                 author_id: req.user,
                 receiver: author_user,
                 receiver_id: recieverUser,
                 receiver_image: author_image_src,
-                body: req.body.body,
+                // body: req.body.body,
                 count: 0,
                 com_count: 0,
                 love_count: 0,
@@ -391,18 +422,18 @@ router.post('/feedPost', async (req, res, next) => {
             });
 
             try {
-                await newFeed.save();
+                let feed = await newFeed.save();
+
             } catch (err) {
-                console.log(err);
                 let error = new Error("Something went wrong");
                 next(error);
             }
         }
 
+
+
         //RETWEET WITH TEXT
         if (req.body.retweet_edit_body) {
-            console.log("This is India", req.body.retweet_edit_id)
-
             var receiverName = currentUserName;
 
             var find_image_src = await User.findById(currentUserID);
@@ -422,23 +453,39 @@ router.post('/feedPost', async (req, res, next) => {
             }
 
             currentFeed = await Feeds.findById(req.body.retweet_edit_id);
+            currentFeed.quote_count++;
             currentFeed.retweet_edit_count++;
+            req.session.activityPost = currentFeed._id;
+
 
             try {
                 await currentFeed.save();
             } catch (err) {
-                console.log(err);
                 let error = new Error("Something went wrong");
                 next(error);
             }
 
 
             const newFeed = new Feeds({
+                user_id: req.user.user_id,
+                body: req.body.retweet_edit_body,
+                created_at: Date.now(),
+                liked_by: [],//currentFeed.liked_by,
+                like_count: 0, //currentFeed.like_count,
+                retweet_count: 0, // currentFeed.retweet_count,
+                reply_count: 0, //currentFeed.reply_count,
+                quote_count: 0, //currentFeed.quote_count,
+                post_type: "quote",
+                parent_id: currentFeed._id,
+                conversation_id: currentFeed.conversation_id,
+                mentions: [], //currentFeed.mentions,
+                visible_to: currentFeed.visible_to,
+
                 author: currentUserName,
                 author_image: author_image_src,
                 receiver: receiverName,
                 receiver_image: receiver_image_src,
-                body: req.body.body,
+                //body: req.body.body,
                 author_id: req.user,
                 receiver_id: recieverUser,
                 count: 0,
@@ -452,17 +499,16 @@ router.post('/feedPost', async (req, res, next) => {
             });
 
             try {
-                await newFeed.save();
+                let nf = await newFeed.save();
+                req.session.activityPost = nf._id;
             } catch (err) {
-                console.log(err);
                 let error = new Error("Something went wrong");
                 next(error);
             }
         }
 
-        //COMMENT RETWEET
+        //COMMENT RETWEET 
         if (req.body.retweet_com) {
-            console.log("This is America", req.body.retweet_com, currentUserID);
 
             var find_image_src = await User.findById(currentUserID);
             var author_image_src = find_image_src.profile_pic;
@@ -477,11 +523,27 @@ router.post('/feedPost', async (req, res, next) => {
             receiver_image_src = user.profile_pic;
             recieverUser = user;
 
-            currentFeed = await Comments.findById(req.body.post_id);
-            currentFeed.count++;
+            currentFeed = await Feeds.findById(req.body.post_id);
+            currentFeed.retweet_count++;
             await currentFeed.save();
+            req.session.activityPost = currentFeed._id;
 
             const newFeed = new Feeds({
+                user_id: req.user.user_id,
+                body: req.body.body,
+                created_at: Date.now(),
+                liked_by: [], //currentFeed.liked_by,
+                like_count: 0, //currentFeed.like_count,
+                retweet_count: 0, //currentFeed.retweet_count,
+                reply_count: 0, // currentFeed.reply_count,
+                quote_count: 0, //currentFeed.quote_count,
+                post_type: "retweet", //To avoid conflict - retweet_com
+                parent_id: currentFeed._id,
+                conversation_id: currentFeed.conversation_id,
+                mentions: currentFeed.mentions,
+                visible_to: currentFeed.visible_to,
+
+
                 author: currentUserName,
                 author_image: author_image_src,
                 author_id: req.user,
@@ -501,7 +563,6 @@ router.post('/feedPost', async (req, res, next) => {
             try {
                 await newFeed.save();
             } catch (err) {
-                console.log(err);
                 let error = new Error("Something went wrong");
                 next(error);
             }
@@ -509,10 +570,6 @@ router.post('/feedPost', async (req, res, next) => {
 
         //RETWEET POST
         if (req.body.retweet) {
-
-            console.log("retweet clicked");
-
-            console.log(req.body)
 
             var receiverName = currentUserName;
 
@@ -528,25 +585,51 @@ router.post('/feedPost', async (req, res, next) => {
                 });
                 if (!user) return res.status(400).send('Receiver not found!');
 
-                console.log("RECEIVER");
-                console.log(user);
-
                 receiverName = user.username;
                 receiver_image_src = user.profile_pic;
                 recieverUser = user;
             }
 
             currentFeed = await Feeds.findById(feedId);
+            currentFeed.retweet_count++;
             currentFeed.count++;
             await currentFeed.save();
 
+
+            const user = await User.findOne({
+                user_id: currentFeed.user_id
+            });
+
+            if (currentFeed.parent_id) {
+                currentFeed = await Feeds.findById(currentFeed.parent_id);
+            }
+
+            let postUserGroups = user.group_id;
+            let currentUserGroups = req.user.group_id;
+
+            var isSamegroups = utils.findCommonElements(postUserGroups, currentUserGroups);
+
             const newFeed = new Feeds({
+                user_id: req.user.user_id,
+                body: req.body.body,
+                created_at: Date.now(),
+                liked_by: currentFeed.liked_by,
+                like_count: currentFeed.like_count,
+                retweet_count: currentFeed.retweet_count,
+                reply_count: currentFeed.reply_count,
+                quote_count: currentFeed.quote_count,
+                post_type: "retweet",
+                parent_id: currentFeed._id,
+                conversation_id: currentFeed.conversation_id,
+                mentions: currentFeed.mentions,
+                visible_to: isSamegroups ? currentFeed.visible_to : { ...currentFeed.visible_to, users: currentFeed.visible_to.users.concat(currentFeed.user_id) },
+
+
                 author: currentUserName,
                 author_image: author_image_src,
                 receiver: receiverName,
                 receiver_id: recieverUser,
                 receiver_image: receiver_image_src,
-                body: req.body.body,
                 count: 0,
                 author_id: req.user,
                 com_count: 0,
@@ -557,10 +640,22 @@ router.post('/feedPost', async (req, res, next) => {
             });
 
 
+            var status = currentUserName + " retweeted " + user.username + "'s post."
+
+            const notify = new Notifications({
+                inconn_id: currentUserID,
+                outconn_id: user._id,
+                post_id: feedId,
+                activity: "retweet",
+                seen: false,
+                status: status
+            })
+
             try {
-                await newFeed.save();
+                let nf = await newFeed.save();
+                req.session.activityPost = nf._id;
+                await notify.save();
             } catch (err) {
-                console.log(err);
                 let error = new Error("Something went wrong");
                 next(error);
             }
@@ -569,51 +664,68 @@ router.post('/feedPost', async (req, res, next) => {
 
         //LIKE POST
         if (req.body.love) {
-            currentFeed = await Feeds.findById(feedId);
-            const user = await User.findOne({
-                username: currentFeed.author
+            currentFeed = await Feeds.findById(feedId).populate('parent_id');
+            req.session.activityPost = currentFeed._id;
+            let user1 = await User.findOne({
+                user_id: currentFeed.user_id
             });
+            let user2;
 
-            if (!currentFeed.love_people.includes(currentUserID)) {
-                currentFeed.love_count++;
-                currentFeed.love_people.push(currentUserID),
-                    await currentFeed.save();
+            if (currentFeed.post_type == "retweet") {
+                currentFeed = await Feeds.findById(currentFeed.parent_id._id);
+                user2 = await User.findOne({
+                    user_id: currentFeed.user_id
+                });
+
             }
 
-            var status = currentUserName + " liked " + user.username + "'s post."
+            if (!currentFeed.liked_by.includes(currentUserData.username)) {
+                currentFeed.like_count++;
+                currentFeed.liked_by.push(currentUserData.username);
+                await currentFeed.save();
 
-            const notify = new Notifications({
-                inconn_id: currentUserID,
-                outconn_id: user._id,
-                post_id: feedId,
-                comment: false,
-                like: true,
-                status: status
-            })
-            try {
-                await notify.save();
-            } catch (err) {
-                console.log(err);
-                let error = new Error("Something went wrong");
-                next(error);
+                let notifications = [
+                    {
+                        inconn_id: currentUserID,
+                        outconn_id: user1._id,
+                        post_id: feedId,
+                        activity: "like",
+                        seen: false,
+                        status: currentUserName + " liked " + user1.username + "'s post."
+                    }
+                ];
+
+                if (user2) {
+                    notifications.push({
+                        inconn_id: currentUserID,
+                        outconn_id: user2._id,
+                        post_id: feedId,
+                        activity: "like",
+                        seen: false,
+                        status: currentUserName + " liked " + user2.username + "'s post."
+                    })
+                }
+
+                Notifications.insertMany(notifications);
             }
-
         }
 
         //LIKE COMMENT ON POST
         if (req.body.love_com) {
-            console.log("This is America", req.body.love_com);
 
-            currentFeed = await Comments.findById(req.body.love_com);
 
-            if (!currentFeed.love_people.includes(currentUserID)) {
-                currentFeed.love_count++;
-                currentFeed.love_people.push(currentUserID);
+
+            currentFeed = await Feeds.findById(req.body.love_com);
+
+            if (!currentFeed.liked_by.includes(currentUserData.username)) {
+                currentFeed.like_count++;
+                currentFeed.liked_by.push(currentUserData.username);
                 await currentFeed.save();
+                req.session.activityPost = currentFeed._id;
             }
 
             const user = await User.findOne({
-                username: currentFeed.author
+                user_id: currentFeed.user_id
             });
 
             var status = currentUserName + " liked " + user.username + "'s comment."
@@ -622,14 +734,13 @@ router.post('/feedPost', async (req, res, next) => {
                 inconn_id: currentUserID,
                 outconn_id: user._id,
                 post_id: feedId,
-                comment: true,
-                like: true,
+                activity: "like",
+                seen: false,
                 status: status
             })
             try {
                 await notify.save();
             } catch (err) {
-                console.log(err);
                 let error = new Error("Something went wrong");
                 next(error);
             }
@@ -637,8 +748,8 @@ router.post('/feedPost', async (req, res, next) => {
         }
 
     } else {
-
         var receiverName = currentUserName;
+
         if (req.body.receiver != "") {
             const user = await User.findOne({
                 username: req.body.receiver
@@ -650,28 +761,70 @@ router.post('/feedPost', async (req, res, next) => {
         var find_image_src = await User.findById(currentUserID);
         var author_image_src = find_image_src.profile_pic;
 
-        const newFeed = new Feeds({
-            author: currentUserName,
-            author_image: author_image_src,
-            receiver: receiverName,
-            body: req.body.body,
-            author_id: req.user,
-            count: 0,
-            love_count: 0,
-            com_count: 0,
-            love_people: [],
-            retweet_edit_body: "",
-            retweet_edit_count: 0,
-            notification: ""
+        //GET USER MENTIONS FROM POST BODY
+        let user_mentions = []
+        let post_body_parts = req.body.body.split(" ");
+        post_body_parts.forEach(part => {
+            if (part.startsWith("@")) {
+                part = part.split("");
+                part.shift();
+                user_mentions.push(part.join("").trim());
+            }
         });
 
-        try {
-            await newFeed.save();
-        } catch (err) {
-            console.log(err);
-            let error = new Error("Something went wrong");
-            next(error);
-        }
+
+
+        req.user.getUserGroupMembers(currentUserID, async (groupUsers, groups) => {
+            groupUsers = groupUsers.map(user => user.user_id);
+
+            req.session.newPostMade = true;
+
+            let feed = {
+                user_id: currentUserData.user_id,
+                body: utils.urlify(req.body.body),
+                created_at: Date.now(),
+                liked_by: [],
+                like_count: 0,
+                retweet_count: 0,
+                reply_count: 0,
+                quote_count: 0,
+                post_type: "tweet",
+                parent_id: null,
+                conversation_id: null,
+                mentions: [...new Set(user_mentions)],
+                visible_to: { users: groupUsers, groups },
+                image: req.file ? req.file.location : "null",
+
+
+                author: currentUserName,
+                author_image: author_image_src,
+                receiver: receiverName,
+                author_id: req.user,
+                count: 0,
+                love_count: 0,
+                com_count: 0,
+                love_people: [],
+                retweet_edit_body: "",
+                retweet_edit_count: 0,
+                notification: ""
+            }
+
+            const newFeed = new Feeds(feed);
+
+
+            try {
+                let feed = await newFeed.save();
+
+                feed.getUserMentions(req.body.body);
+
+                feed.conversation_id = feed._id;
+                req.session.activityPost = feed._id;
+                await feed.save();
+            } catch (err) {
+                let error = new Error("Something went wrong");
+                next(error);
+            }
+        });
     }
 
     var posts = await getAllPosts(req.user._id);
@@ -684,7 +837,7 @@ router.post('/feedPost', async (req, res, next) => {
     if (feedId && (req.body.comment || req.body.love)) {
         currentFeed = await Feeds.findById(feedId);
         user = await User.findOne({
-            username: currentFeed.author
+            user_id: currentFeed.user_id
         });
         let u = await User.findById(currentUserID);
         userGroups = u.group_id;
@@ -704,7 +857,6 @@ router.post('/feedPost', async (req, res, next) => {
             });
 
             group_users.forEach(async (member) => {
-
                 if (JSON.stringify(member) == JSON.stringify(user._id)) {
                     feedNotificationProcessed++;
                     if (feedNotificationProcessed === array.length) {
@@ -712,34 +864,49 @@ router.post('/feedPost', async (req, res, next) => {
                     }
                     return true;
                 }
-
-
                 notificationUsers.push(member);
             });
 
             feedNotificationProcessed++;
             if (feedNotificationProcessed === array.length) {
-
                 let currentUser = await User.findById(currentUserID);
+                let found = currentFeed.visible_to.users.includes(currentUser._id.toString());
+                let currentUserGroups = currentUser.group_id;
+                let otherGroups = [];
+                let groupProccessed = 0;
+                currentUserGroups.forEach(async (grp, index, array) => {
+                    let g = await Group.findOne({ group_id: grp })
+                    otherGroups.push(g.group_name);
+                    groupProccessed++;
+                    if (groupProccessed == array.length) {
+                        groupDOne();
+                    }
+                });
 
-                let found = currentFeed.feedNotification.users.includes(currentUser._id.toString());
+                notificationUsers = currentFeed.visible_to.users.concat(notificationUsers.map(user => user.user_id));
 
-                if (!found) {
+                //check if user is from different group
+                let isFromSame = utils.isHavingSameItems(req.user.group_id, user.group_id);
 
-                    let activity = '';
-                    if (req.body.comment) activity = 'comment'; else if (req.body.retweet) activity = 'retweet'; else activity = 'love';
-                    currentFeed.feedNotification.users = notificationUsers;
-                    currentFeed.feedNotification.userId = req.user._id;
-                    currentFeed.feedNotification.userActivity = activity;
-                    currentFeed.timestamp = req.body.comment ? Date.now() : currentFeed.timestamp;
-                    await currentFeed.save();
+                async function groupDOne() {
+                    otherGroups = otherGroups.concat(currentFeed.visible_to.groups)
+
+                    if (!found && (JSON.stringify(currentUser._id) != JSON.stringify(user._id))) {
+                        let activity = '';
+                        if (req.body.comment) activity = 'comment'; else if (req.body.retweet) activity = 'retweet'; else activity = 'love';
+                        currentFeed.visible_to.users = [...new Set(notificationUsers)];
+                        currentFeed.visible_to.groups = [...new Set(otherGroups)];
+                        if (isFromSame) {
+                            currentFeed.visible_to.userId = req.user._id;
+                            currentFeed.visible_to.userActivity = activity;
+                            currentFeed.timestamp = req.body.comment ? Date.now() : currentFeed.timestamp;
+                        }
+                        await currentFeed.save();
+                    }
+                    addComments();
                 }
-
-                addComments();
             }
-
         });
-
 
 
         /********************** */
@@ -776,10 +943,10 @@ router.post('/feedPost', async (req, res, next) => {
         addComments()
     }
 
+
+
     function addComments() {
-
         var commentItemProcessed = 0;
-
         userPosts = userPosts.map((post, index, array) => {
             if (post._id) {
                 Comments.find({
@@ -787,7 +954,6 @@ router.post('/feedPost', async (req, res, next) => {
                 }).populate('author_id').exec().then(comments => {
                     nPosts.push({ ...post._doc, comments })
                     commentItemProcessed++;
-                    console.log(commentItemProcessed + "   " + array.length)
                     if (commentItemProcessed === array.length) {
                         callback();
                     }
@@ -802,25 +968,13 @@ router.post('/feedPost', async (req, res, next) => {
         });
     }
 
-    function removeDuplicates(arr) {
-        const uniqueArray = arr.filter((thing, index) => {
-            const _thing = JSON.stringify(thing);
-            return index === arr.findIndex(obj => {
-                return JSON.stringify(obj) === _thing;
-            });
-        });
-        return uniqueArray;
-    }
-
     function callback() {
         nPosts.sort(function (a, b) {
             return b["timestamp"] - a["timestamp"]
         });
-        res.redirect('users/feeds');
+        global.nsp.emit('new-post', "new-post");
+        res.redirect('users/home');
     }
-
-
-
 
     /*if (feedId && (req.body.comment || req.body.love)) {
         currentFeed = await Feeds.findById(feedId);
@@ -877,7 +1031,7 @@ router.post('/feedPost', async (req, res, next) => {
                 }).populate('author_id').exec().then(comments => {
                     nPosts.push({ ...post._doc, comments })
                     commentItemProcessed++;
-                    console.log(commentItemProcessed + "   " + array.length)
+                    
                     if (commentItemProcessed === array.length) {
                         callback();
                     }
@@ -918,10 +1072,8 @@ router.post('/profile', async (req, res, next) => {
     if (emailExists) return res.status(400).send('Email already exists! Please signup with different Email address');
 
     //HASH PASSWORD
-    console.log('Hash Pass');
     const salt = await bcrypt.genSalt(10);
     const hashPassword = await bcrypt.hash(sess.body.password, salt);
-    console.log("iiii", req.body);
 
     //CREATE A NEW USER
     const user = new User({
@@ -937,19 +1089,17 @@ router.post('/profile', async (req, res, next) => {
         const savedUser = await user.save();
         res.render('../views/login_succ');
     } catch (err) {
-        console.log(err);
         let error = new Error("Something went wrong");
         next(error);
     }
 });
 
 router.post('/login', async (req, res) => {
+    req.session.activityPost = null;
+
     const {
         error
     } = loginValidation(req.body);
-
-    console.log("Validation")
-    console.log(error)
 
     if (error) {
         return res.status(422)
@@ -972,6 +1122,13 @@ router.post('/login', async (req, res) => {
             });
     }
 
+    if (!user.password) return res.status(403)
+        .render('./../views/login.ejs', {
+            pageTitle: "Login",
+            message: "Invalid email address or password",
+            input: { email: req.body.email }
+        });
+
     const validPass = await bcrypt.compare(req.body.password, user.password);
     if (!validPass) {
         return res.status(403)
@@ -982,9 +1139,22 @@ router.post('/login', async (req, res) => {
             });
     }
 
+    //Logger for user login time
+    let log = new Logger({
+        user: {
+            id: user._id,
+            username: user.username,
+            name: user.name
+        },
+        loggedInAt: new Date()
+    });
+    log.save();
+
+
     currentUserID = user._id;
     req.session.user = user;
     req.session.isLoggedIn = true;
+    req.session.notificationViewed = false;
     const salt = user.salt;
     currentUserName = user.username;
 
@@ -994,7 +1164,8 @@ router.post('/login', async (req, res) => {
         bio: user.bio,
         location: user.location,
         connection: user.connection,
-        image_src: user.profile_pic
+        image_src: user.profile_pic,
+        user_id: user.user_id
     };
 
     var map = new Map(); // only because unsued variables are part of humanity!
@@ -1041,40 +1212,35 @@ router.post('/login', async (req, res) => {
         //     suggestions: JSON.stringify(connection_list),
         //     moment
         // });
-        res.redirect('users/feeds');
+        res.redirect('users/home');
     }
 });
 
-
-router.get('/logout', function logout(req, res) {
+router.get('/logout', async (req, res, next) => {
+    //Logger for user logout time
+    if (req.user) {
+        let log = await Logger.findOne({ 'user.id': req.user._id }).sort([['loggedInAt', -1]]);
+        if (log) {
+            log.loggedOutAt = new Date();
+            log.save();
+        }
+    }
     req.session.destroy((err) => {
         res.redirect('/')
     })
-});
-
+})
 
 router.post('/profile', async (req, res, next) => {
     //VALIDATE BEFORE CREATE
 
     sess = req.session;
-    //console.logle.log('Session signup');
+
     sess.body = req.body;
-    //console.logle.log("Request body : ",req.body);
 
-
-    //const {error} = registerValidation(sess.body);
-    //if(error) return res.status(400).send(error.details[0].message);
-
-    //Check if user already in DB
-    //console.logle.log('Find User');
     const emailExists = await User.findOne({
         username: sess.body['username']
     });
     if (emailExists) return res.status(400).send('Email already exists!');
-
-    //HASH PASSWORD
-    //console.logle.log('Hash Pass');
-
 
     const salt = await bcrypt.genSalt(10);
 
@@ -1096,7 +1262,6 @@ router.post('/profile', async (req, res, next) => {
         });
 
     } catch (err) {
-        console.log(err);
         let error = new Error("Something went wrong");
         next(error);
     }

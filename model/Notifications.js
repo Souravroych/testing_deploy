@@ -13,11 +13,8 @@ const notificationSchema = new mongoose.Schema({
         type: mongoose.Types.ObjectId,
         ref: "Feeds"
     },
-    comment: {
-        type: Boolean
-    },
-    like: {
-        type: Boolean
+    activity: {
+        type: String,
     },
     status: {
         type: String
@@ -25,6 +22,9 @@ const notificationSchema = new mongoose.Schema({
     timestamp: {
         type: Date,
         default: Date.now
+    },
+    seen: {
+        type: Boolean
     }
 });
 
