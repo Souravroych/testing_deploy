@@ -6,18 +6,23 @@ const firstLoginValidation = data => {
     const schema = Joi.object({
         idcode: Joi.string().min(6).required()
     });
-        return schema.validate(data);
-    }
-    
+    return schema.validate(data);
+}
+
 
 //REG VALIDATION
 const registerValidation = data => {
-const schema = Joi.object({
-    idcode: Joi.string().min(6).required(),
-    name: Joi.string().min(6).required(),
-    email: Joi.string().required().email(),
-    password: Joi.string().required()
-});
+    const schema = Joi.object({
+        image_src: Joi.string().required(),
+        name: Joi.string().required(),
+        email: Joi.string().required().email(),
+        username: Joi.string().min(3).required(),
+        location: Joi.string().required(),
+        bio: Joi.string().max(50).required(),
+        password: Joi.string().required(),
+        password_conf: Joi.string().required(),
+        id: Joi.string()
+    });
     return schema.validate(data);
 }
 
@@ -27,9 +32,31 @@ const loginValidation = data => {
         email: Joi.string().required().email(),
         password: Joi.string().required()
     });
-        return schema.validate(data);
-    }
-    
+    return schema.validate(data);
+}
+
+const updateProfile = data => {
+    const schema = Joi.object({
+        name: Joi.string().min(4).required(),
+        location: Joi.string().required(),
+        bio: Joi.string().min(3).required()
+    });
+    return schema.validate(data);
+}
+
+const resetPassword = data => {
+    const schema = Joi.object({
+        currentPassword: Joi.string().required(),
+        newPassword: Joi.string().min(6).required(),
+        cnewPassword: Joi.string().required(),
+        cnewPassword: Joi.any().valid(Joi.ref('newPassword')).required().label("Passwords are not matching"),
+    })
+    return schema.validate(data);
+}
+
+
 module.exports.firstLoginValidation = firstLoginValidation;
 module.exports.registerValidation = registerValidation;
 module.exports.loginValidation = loginValidation;
+module.exports.resetPassword = resetPassword;
+module.exports.updateProfile = updateProfile;

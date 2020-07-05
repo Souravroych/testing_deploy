@@ -1,13 +1,19 @@
 const mongoose = require('mongoose');
 
-const userSchema = new mongoose.Schema ({
+const userSchema = new mongoose.Schema({
     feedId: {
-        type: String,
+        type: mongoose.Types.ObjectId,
+        ref: 'Feeds'
     },
     author: {
         type: String,
     },
-    author_img_src:{
+    author_id: {
+        type: mongoose.Types.ObjectId,
+        ref: 'user',
+        required: true
+    },
+    author_img_src: {
         type: String,
     },
     body: {
@@ -25,7 +31,13 @@ const userSchema = new mongoose.Schema ({
     },
     love_people: {
         type: Array
-    }
+    },
+    retweet_edit_body: {
+        type: String
+    },
+    retweet_edit_count: {
+        type: Number
+    },
 });
 
-module.exports = mongoose.model('Comments', userSchema,'comments');
+module.exports = mongoose.model('Comments', userSchema, 'comments');
