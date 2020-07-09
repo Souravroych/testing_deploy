@@ -2,16 +2,16 @@ $(document).ready(function () {
     var fileId;
 
     //Connection array
-    connections = connections.split("&#34;").join('"')
-    connections = JSON.parse(connections);
-    connections = connections.filter(conn => conn.username ? true : false);
-    connections = connections.map(connection => {
-        return connection.username;
-    });
+    // connections = connections.split("&#34;").join('"')
+    // connections = JSON.parse(connections);
+    // connections = connections.filter(conn => conn.username ? true : false);
+    // connections = connections.map(connection => {
+    //     return connection.username;
+    // });
 
     $('.input-type-dec, .input-type-dec1').atwho({
         at: "@",
-        data: connections
+        data: []
     })
 
     //Post image input change
