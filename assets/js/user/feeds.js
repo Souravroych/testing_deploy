@@ -2,7 +2,8 @@ $(document).ready(function () {
     var fileId;
 
     //Connection array
-    // connections = connections.split("&#34;").join('"')
+    connections = connections.split("&#34;").join('"')
+    console.log(connections)
     // connections = JSON.parse(connections);
     // connections = connections.filter(conn => conn.username ? true : false);
     // connections = connections.map(connection => {
