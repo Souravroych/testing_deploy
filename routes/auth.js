@@ -1,525 +1,1178 @@
 const router = require('express').Router();
+const bodyParser = require('body-parser');
+const bcrypt = require('bcryptjs');
+const moment = require('moment');
+const momentTZ = require('moment-timezone');
+
 const User = require('../model/User');
 const Feeds = require('../model/Feeds');
 const Comments = require('../model/Comments');
-const mongoose = require('mongoose');
-const bodyParser = require("body-parser");
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
-const {
-    firstLoginValidation,
-    registerValidation,
-    loginValidation
-} = require('../validation');
+const Notifications = require('../model/Notifications');
+const Group = require('./../model/Group');
+const authController = require('./../controllers/auth');
+const Logger = require('./../model/Logger');
+const { urlify, isHavingSameItems, findCommonElements } = require('./../utils');
+
+const { firstLoginValidation, loginValidation } = require('../validation');
 const session = require('express-session');
 
-var currentUserName = "admin"; // default [temporary]
+var currentUserName = 'admin'; // default [temporary]
 var currentUserData;
 var currentUserID;
 
-router.use(session({
-    secret: 'ssshhhhh',
-    saveUninitialized: true,
-    resave: true,
-    cookie: {
-        secure: true
-    }
-}));
-router.use(bodyParser.urlencoded({
-    extended: true
-}));
+// session configuration
+router.use(
+	session({
+		secret: 'ssshhhhh',
+		saveUninitialized: true,
+		resave: true,
+		cookie: {
+			secure: true,
+		},
+	})
+);
+router.use(
+	bodyParser.urlencoded({
+		extended: true,
+	})
+);
 
 // var cart = [{postBody: req.body.myTextarea}];
 var sess;
+let newComment = null;
 
-router.post('/', async (req, res) => {
+// Get all user posts
+async function getAllPosts(userID) {
+	var allPosts = [];
+	var feedNotifications = [];
 
-})
+	var user_conn = await getAllConnectionInformation();
+	for (var i = 0; i < user_conn.length; i++) {
+		let temp_post = await Feeds.find({
+			author: user_conn[i].username,
+		})
+			.populate('author_id', 'name username email')
+			.populate('receiver_id');
 
-async function getAllPosts() {
-    var allPosts = await Feeds.find({});
-    allPosts.sort(function (a, b) {
-        return b["timestamp"] - a["timestamp"]
-    });
+		allPosts.push.apply(allPosts, temp_post);
+	}
 
-    console.log("Getting Comments");
-    for (var curPost = 0; curPost < allPosts.length; curPost++) {
-        var feedComments = await getAllComments(allPosts[curPost]["_id"]);
-        allPosts[curPost].comments = feedComments;
-    }
+	let entireFeeds = await Feeds.find({
+		'visible_to.users': { $in: [userID] },
+	});
 
-    return allPosts;
+	var temp_post = await Feeds.find({
+		author: currentUserData.username,
+	})
+		.populate('receiver_id')
+		.populate('author_id', 'name username email');
+
+	allPosts.push.apply(allPosts, temp_post);
+
+	var noti = await Notifications.find({});
+	for (let i = 0; i < noti.length; i++) {
+		if (
+			user_conn.includes(noti[i].inconn_id) &&
+			!user_conn.includes(noti[i].outconn_id) &&
+			currentUserID != noti[i].outconn_id
+		) {
+			currentFeed = await Feeds.findById(noti.post_id);
+			currentFeed.timestamp = noti.timestamp;
+			currentFeed.notification = noti.status;
+			allPosts.push.apply(allPosts, currentFeed);
+		}
+	}
+
+	for (var curPost = 0; curPost < allPosts.length; curPost++) {
+		var feedComments = await allPosts[curPost]['_id'];
+		allPosts[curPost].comments = feedComments;
+	}
+
+	allPosts = allPosts.concat(entireFeeds);
+
+	allPosts.sort(function (a, b) {
+		return b['created_at'] - a['created_at'];
+	});
+
+	return allPosts;
+}
+
+// Get all connections
+async function getAllConnectionInformation() {
+	const user = await User.findOne({
+		_id: currentUserID,
+	});
+
+	user_dict = [];
+
+	return user_dict;
 }
 
 async function getAllComments(feedId) {
-    var allComments = await Comments.find({
-        feedId: feedId
-    });
-    allComments.sort(function (a, b) {
-        return b["timestamp"] - a["timestamp"]
-    });
+	var allComments = await Comments.find({
+		feedId: feedId,
+	});
+	allComments.sort(function (a, b) {
+		return b['timestamp'] - a['timestamp'];
+	});
 
-    // console.log("allcoments", allComments)
-
-    return allComments;
+	return allComments;
 }
 
 router.post('/idlogin', async (req, res) => {
-    console.log("Request body: ", req.body);
+	sess = req.session;
+	sess.body = req.body;
 
-    sess = req.session;
-    sess.body = req.body;
+	const { error } = firstLoginValidation(req.body);
 
+	if (error) {
+		req.flash('message', error.details[0].message);
+		req.flash('form', req.body);
+		res.redirect('/');
+	}
 
-    //console.logle.log('Session initialized');
+	const user = await User.findOne({
+		username: req.body.idcode,
+	});
 
+	if (user) {
+		currentUserID = user._id;
+		req.session.user = user;
+		req.session.isLoggedIn = true;
+		const salt = user.salt;
+		currentUserName = user.username;
 
-    const {
-        error
-    } = firstLoginValidation(req.body);
-    //console.logle.log('Session Checking');
-    if (error) return res.status(400).send(error.details[0].message);
+		currentUserData = {
+			username: user.username,
+			name: user.name,
+			bio: user.bio,
+			location: user.location,
+			connection: user.connection,
+			image_src: user.image_src,
+		};
 
+		var map = new Map(); // only because unsued variables are part of humanity!
+		var connection_list = await getAllConnectionInformation();
 
+		var posts = await getAllPosts(user._id);
+		userPosts = [currentUserData].concat(posts);
 
+		var itemsProcessed = 0;
 
-    const user = await User.findOne({
-        username: req.body.idcode
-    });
+		let nPosts = [];
 
-    currentUserID = user._id;
+		userPosts = userPosts.map((post, index, array) => {
+			if (post._id) {
+				Comments.find({
+					feedId: post._id,
+				})
+					.populate('author_id')
+					.exec()
+					.then((comments) => {
+						nPosts.push({ ...post._doc, comments });
+						itemsProcessed++;
+						if (itemsProcessed === array.length) {
+							callback();
+						}
+					});
+			} else {
+				nPosts.push({ ...post, comments: [] });
+				itemsProcessed++;
+				if (itemsProcessed === array.length) {
+					callback();
+				}
+			}
+		});
 
-    const salt = user.salt;
-    //console.logle.log(user,"klkl");
+		function callback() {
+			nPosts.sort(function (a, b) {
+				return b['timestamp'] - a['timestamp'];
+			});
 
-    // const pass1=await bcrypt.hash(req.body.pass, salt);
-    //  if(!user) return res.status(400).send('ID code not found!');
-    //  //console.logle.log(pass1);
-    //  //console.logle.log(user.password);
-    // if(user.password.toString() === pass1.toString())
-
-
-    currentUserName = user.username;
-
-    //console.logle.log(user.connection + ' ..........................................')
-
-    currentUserData = {
-        username: user.username,
-        name: user.name,
-        bio: user.bio,
-        location: user.location,
-        connection: user.connection,
-        image_src: user.image_src
-    };
-
-
-    //console.logle.log("hghg", currentUserData);
-    var map = new Map(); // only because unsued variables are part of humanity!
-
-    ////console.logle.log(map);
-
-    //console.logle.log(map.has('5e2b3564e2b3124f1bbd9f4e'));
-    //CREATE A TOKEN
-    // const token = jwt.sign({_id: user._id}, process.env.TOKEN_SECRET);
-    // res.header('auth_token', token).send(token);
-
-    // Get All posts
-    var posts = await getAllPosts();
-    userPosts = [currentUserData].concat(posts);
-    //console.logle.log("hjhjhj",userPosts);
-
-
-    res.render('../views/feeds_page', {
-        posts: userPosts,
-        map: map,
-        user1: user
-    });
-
-
-
-    // else{
-    // return res.status(400).send('userid/password  not correct!');	
-
-    // }
-
-
+			res.render('../views/feeds_page', {
+				posts: nPosts,
+				connections: connection_list,
+				map: map,
+				user1: user,
+				user: user,
+				suggestions: JSON.stringify(connection_list),
+				moment,
+			});
+		}
+	} else {
+		req.flash('message', 'Invalid credentials');
+		req.flash('form', req.body);
+		res.redirect('/');
+	}
 });
 
-router.post('/feedPost', async (req, res) => {
-    //console.logle.log("Button clicked from user", currentUserName);
-    //console.logle.log(req.query,"uiuiui");
+// User post creation
+router.post('/feedPost', async (req, res, next) => {
+	let { feedId } = req.query;
 
+	let currentFeed;
+	var userPosts = [];
+	var nPosts = [];
 
-    let {
-        feedId
-    } = req.query;
+	currentUserName = req.user.username;
+	currentUserID = req.user._id;
 
-    if (feedId) {
+	// get all user data
+	currentUserData = {
+		username: req.user.username,
+		name: req.user.name,
+		bio: req.user.bio,
+		location: req.user.location,
+		connection: req.user.connection,
+		image_src: req.user.profile_pic,
+		user_id: req.user.user_id,
+	};
 
+	if (feedId) {
+		// Comment/Reply on Post
+		if (req.body.comment || req.file) {
+			currentFeed = await Feeds.findById(feedId);
 
-        if (req.body.comment) {
+			if (currentFeed.post_type == 'retweet') {
+				currentFeed = await Feeds.findById(currentFeed.parent_id);
+			}
 
-            currentFeed = await Feeds.findById(feedId);
-            currentFeed.com_count++;
-            await currentFeed.save();
+			req.session.newCommentFeed = feedId;
+			//currentFeed.created_at = +new Date();
+			currentFeed.com_count++;
+			currentFeed.reply_count++;
+			currentFeed.timestamp = Date.now();
+			await currentFeed.save();
 
-            const user = await User.findOne({
-                username: currentUserName
-            });
+			req.session.activityPost = currentFeed._id;
 
+			// find user with current post
+			const user = await User.findOne({
+				user_id: currentFeed.user_id,
+			});
 
-            const newComment = new Comments({
-                feedId: feedId,
-                author: currentUserName,
-                body: req.body.comment,
-                count: 0,
-                love_count: 0,
-                love_people: [],
-                author_img_src: user.image_src
-            });
-            try {
-                console.log("Comment: ", feedId, " ", req.body.comment);
-                // console.log(newComment);
-                await newComment.save();
-            } catch (err) {
-                res.status(400).send(err);
-            }
-        }
+			// create new feed with 'reply' type
+			const newFeed = new Feeds({
+				user_id: currentUserData.user_id,
+				body: urlify(req.body.comment),
+				created_at: +new Date(),
+				liked_by: [],
+				like_count: 0,
+				retweet_count: 0,
+				reply_count: 0,
+				quote_count: 0,
+				post_type: 'reply',
+				parent_id: currentFeed._id,
+				conversation_id: currentFeed.conversation_id,
+				mentions: [],
+				visible_to: { users: [...currentFeed.visible_to.users] },
+				image: req.file ? req.file.location : 'null',
+			});
 
-        if (req.body.love_com) {
-            console.log("This is America", req.body.love_com);
+			var status =
+				currentUserName + ' commented on ' + user.username + '"s post.';
 
-            currentFeed = await Comments.findById(req.body.love_com);
+			// create notification
+			const notify = new Notifications({
+				inconn_id: currentUserID,
+				outconn_id: user._id,
+				post_id: feedId,
+				activity: 'comment',
+				seen: false,
+				status: status,
+			});
+			// save notification
+			await notify.save();
 
-            if (!currentFeed.love_people.includes(currentUserID)) {
-                currentFeed.love_count++;
-                currentFeed.love_people.push(currentUserID),
-                    await currentFeed.save();
-            }
-        }
+			try {
+				await newFeed.save();
+			} catch (err) {
+				let error = new Error('Something went wrong');
+				next(error);
+			}
+		}
 
-        if (req.body.retweet_edit_body) {
-            console.log("This is Sparta", req.body.retweet_edit_id)
+		// Retweet comment with text
+		if (req.body.retweet_edit_body_comm) {
+			currentFeed = await Feeds.findById(req.body.retweet_edit_id_comm);
+			currentFeed.quote_count++;
 
-            var receiverName = currentUserName;
+			var author_user = currentFeed.author;
+			var author_image_src = currentFeed.author_img_src;
+			await currentFeed.save();
+			req.session.activityPost = currentFeed._id;
 
-            var find_image_src = await User.findById(currentUserID);
-            var author_image_src = find_image_src.image_src;
-            var receiver_image_src = author_image_src;
+			var receiverName = currentUserName;
+			var find_image_src = await User.findById(currentUserID);
+			var receiver_image_src = find_image_src.profile_pic;
 
-            if (req.body.receiver != "") {
-                const user = await User.findOne({
-                    username: req.body.receiver
-                });
-                if (!user) return res.status(400).send('Receiver not found!');
-                receiverName = user.username;
-                receiver_image_src = user.image_src;
-            }
+			let recieverUser;
 
-            currentFeed = await Feeds.findById(req.body.retweet_edit_id);
-            currentFeed.retweet_edit_count++;
-            await currentFeed.save();
+			// create new feed with 'quote' type
+			const newFeed = new Feeds({
+				user_id: req.user.user_id,
+				body: urlify(req.body.retweet_edit_body_comm),
+				created_at: Date.now(),
+				timestamp: Date.now(),
+				liked_by: 0,
+				like_count: 0,
+				retweet_count: 0,
+				reply_count: 0,
+				quote_count: 0,
+				post_type: 'quote',
+				parent_id: currentFeed._id,
+				conversation_id: currentFeed.conversation_id,
+				mentions: currentFeed.mentions,
+				visible_to: currentFeed.visible_to,
 
-            //console.logle.log("lplplp");
-            const newFeed = new Feeds({
-                author: currentUserName,
-                author_image: author_image_src,
-                receiver: receiverName,
-                receiver_image: receiver_image_src,
-                body: req.body.body,
-                count: 0,
-                com_count: 0,
-                love_count:0,
-                love_people: [],
-                retweet_edit_body: "",
-                retweet_edit_count: 0,
-                retweet_edit_body: req.body.retweet_edit_body
-            });
+				author: receiverName,
+				author_image: receiver_image_src,
+				author_id: req.user,
+				receiver: author_user,
+				receiver_id: recieverUser,
+				receiver_image: author_image_src,
+				count: 0,
+				com_count: 0,
+				love_count: 0,
+				love_people: [],
+				retweet_edit_count: 0,
+				retweet_edit_body: req.body.retweet_edit_body_comm,
+				notification: '',
+			});
 
-            try {
-                await newFeed.save();
-            } catch (err) {
-                res.status(400).send(err);
-            }
+			try {
+				// save feed
+				await newFeed.save();
+			} catch (err) {
+				let error = new Error('Something went wrong');
+				next(error);
+			}
+		}
 
+		// Retweet with text
+		if (req.body.retweet_edit_body) {
+			let receiverName = currentUserName;
 
+			let find_image_src = await User.findById(currentUserID);
+			let author_image_src = find_image_src.profile_pic;
+			let receiver_image_src = author_image_src;
 
-        }
+			let recieverUser;
 
-        if (req.body.retweet_com) {
-            console.log("This is America", req.body.retweet_com, currentUserID);
+			if (req.body.receiver != '') {
+				const user = await User.findOne({
+					username: req.body.receiver,
+				});
+				if (!user) return res.status(400).send('Receiver not found!');
+				receiverName = user.username;
+				receiver_image_src = user.profile_pic;
+				recieverUser = user;
+			}
 
-            var find_image_src = await User.findById(currentUserID);
-            var author_image_src = find_image_src.image_src;
-            var receiver_image_src = author_image_src;
+			currentFeed = await Feeds.findById(req.body.retweet_edit_id);
+			// increase quote count
+			currentFeed.quote_count++;
+			currentFeed.retweet_edit_count++;
 
-            const user = await User.findOne({
-                username: req.body.retweet_com
-            });
-            receiverName = user.username;
-            receiver_image_src = user.image_src;
+			req.session.activityPost = currentFeed._id;
 
+			try {
+				// save feed
+				await currentFeed.save();
+			} catch (err) {
+				let error = new Error('Something went wrong');
+				next(error);
+			}
 
-            currentFeed = await Comments.findById(req.body.post_id);
-            currentFeed.count++;
-            await currentFeed.save();
+			// Create new feed with 'quote' type
+			const newFeed = new Feeds({
+				user_id: req.user.user_id,
+				body: urlify(req.body.retweet_edit_body),
+				created_at: Date.now(),
+				timestamp: Date.now(),
+				liked_by: [],
+				like_count: 0,
+				retweet_count: 0,
+				reply_count: 0,
+				quote_count: 0,
+				post_type: 'quote',
+				parent_id: currentFeed._id,
+				conversation_id: currentFeed.conversation_id,
+				mentions: [],
+				visible_to: currentFeed.visible_to,
 
-            const newFeed = new Feeds({
-                author: currentUserName,
-                author_image: author_image_src,
-                receiver: receiverName,
-                receiver_image: receiver_image_src,
-                body: req.body.body,
-                count: 0,
-                love_count: 0,
-                com_count: 0,
-                love_people: [],
-                retweet_edit_body: "",
-                retweet_edit_count: 0,
+				author: currentUserName,
+				author_image: author_image_src,
+				receiver: receiverName,
+				receiver_image: receiver_image_src,
+				author_id: req.user,
+				receiver_id: recieverUser,
+				count: 0,
+				com_count: 0,
+				love_count: 0,
+				love_people: [],
+				retweet_edit_count: 0,
+				retweet_edit_body: req.body.retweet_edit_body,
+				notification: '',
+			});
 
-            });
+			try {
+				// Save feed
+				let nf = await newFeed.save();
+				req.session.activityPost = nf._id;
+			} catch (err) {
+				let error = new Error('Something went wrong');
+				next(error);
+			}
+		}
 
-            await newFeed.save();
+		// Comment retweet
+		if (req.body.retweet_com) {
+			let find_image_src = await User.findById(currentUserID);
+			let author_image_src = find_image_src.profile_pic;
+			let receiver_image_src = author_image_src;
 
-        }
+			let recieverUser;
 
-        if (req.body.retweet) {
-            console.log("retweet clicked");
-            var receiverName = currentUserName;
+			// find user of feed
+			const user = await User.findOne({
+				username: req.body.retweet_com,
+			});
+			receiverName = user.username;
+			receiver_image_src = user.profile_pic;
+			recieverUser = user;
 
-            var find_image_src = await User.findById(currentUserID);
-            var author_image_src = find_image_src.image_src;
-            var receiver_image_src = author_image_src;
+			currentFeed = await Feeds.findById(req.body.post_id);
+			currentFeed.retweet_count++;
 
+			await currentFeed.save();
+			req.session.activityPost = currentFeed._id;
 
+			// Create new feed with type 'retweet'
+			const newFeed = new Feeds({
+				user_id: req.user.user_id,
+				body: urlify(req.body.body),
+				created_at: Date.now(),
+				timestamp: Date.now(),
+				liked_by: [],
+				like_count: 0,
+				retweet_count: 0,
+				reply_count: 0,
+				quote_count: 0,
+				post_type: 'retweet',
+				parent_id: currentFeed._id,
+				conversation_id: currentFeed.conversation_id,
+				mentions: currentFeed.mentions,
+				visible_to: currentFeed.visible_to,
 
-            if (req.body.receiver != "") {
-                const user = await User.findOne({
-                    username: req.body.receiver
-                });
-                if (!user) return res.status(400).send('Receiver not found!');
-                receiverName = user.username;
-                receiver_image_src = user.image_src;
-            }
+				author: currentUserName,
+				author_image: author_image_src,
+				author_id: req.user,
+				receiver: receiverName,
+				receiver_image: receiver_image_src,
+				receiver_id: recieverUser,
+				count: 0,
+				love_count: 0,
+				com_count: 0,
+				love_people: [],
+				retweet_edit_body: '',
+				retweet_edit_count: 0,
+				notification: '',
+			});
 
-            currentFeed = await Feeds.findById(feedId);
-            currentFeed.count++;
-            await currentFeed.save();
+			try {
+				// save feed
+				await newFeed.save();
+			} catch (err) {
+				let error = new Error('Something went wrong');
+				next(error);
+			}
+		}
 
-            const newFeed = new Feeds({
-                author: currentUserName,
-                author_image: author_image_src,
-                receiver: receiverName,
-                receiver_image: receiver_image_src,
-                body: req.body.body,
-                count: 0,
-                com_count: 0,
-                love_people: [],
-                retweet_edit_body: "",
-                retweet_edit_count: 0
-            });
+		// Retweet post
+		if (req.body.retweet) {
+			let receiverName = currentUserName;
 
-            await newFeed.save();
-        }
+			let find_image_src = await User.findById(currentUserID);
+			let author_image_src = find_image_src.profile_pic;
+			let receiver_image_src = author_image_src;
 
+			let recieverUser;
 
-        if (req.body.love) {
-            currentFeed = await Feeds.findById(feedId);
+			if (req.body.receiver != '') {
+				const user = await User.findOne({
+					username: req.body.receiver,
+				});
+				if (!user) return res.status(400).send('Receiver not found!');
 
-            if (!currentFeed.love_people.includes(currentUserID)) {
-                currentFeed.love_count++;
-                currentFeed.love_people.push(currentUserID),
-                    await currentFeed.save();
-            }
+				receiverName = user.username;
+				receiver_image_src = user.profile_pic;
+				recieverUser = user;
+			}
 
+			// find feed
+			currentFeed = await Feeds.findById(feedId);
+			currentFeed.retweet_count++;
+			currentFeed.count++;
 
+			await currentFeed.save();
 
-            //console.logle.log("love clicked");
-        }
-    } else {
-        //console.logle.log("newton");
-        var receiverName = currentUserName;
-        if (req.body.receiver != "") {
-            const user = await User.findOne({
-                username: req.body.receiver
-            });
-            console.log(user, "ijiji");
-            if (!user) return res.status(400).send('Receiver not found!');
-            receiverName = user.name;
-        }
+			// find user from feed user_id
+			const user = await User.findOne({
+				user_id: currentFeed.user_id,
+			});
 
-        var find_image_src = await User.findById(currentUserID);
-        var author_image_src = find_image_src.image_src;
+			if (currentFeed.parent_id) {
+				currentFeed = await Feeds.findById(currentFeed.parent_id);
+			}
 
-        //console.logle.log("lplplp");
-        const newFeed = new Feeds({
-            author: currentUserName,
-            author_image: author_image_src,
-            receiver: receiverName,
-            body: req.body.body,
-            count: 0,
-            love_count: 0,
-            com_count: 0,
-            love_people: [],
-            retweet_edit_body: "",
-            retweet_edit_count: 0
-        });
+			let postUserGroups = user.groups;
+			let currentUserGroups = req.user.groups;
 
-        try {
-            await newFeed.save();
-        } catch (err) {
-            res.status(400).send(err);
-        }
-    }
+			// check if current user and post user share's common group
+			var isSamegroups = findCommonElements(
+				postUserGroups,
+				currentUserGroups
+			);
 
-    //console.logle.log('On feeds page');
-    var posts = await getAllPosts();
-    //console.logle.log(posts,"oiooioi")
+			// Create new feed with type 'retweet'
+			const newFeed = new Feeds({
+				user_id: req.user.user_id,
+				body: urlify(req.body.body),
+				created_at: Date.now(),
+				timestamp: Date.now(),
+				liked_by: currentFeed.liked_by,
+				like_count: currentFeed.like_count,
+				retweet_count: currentFeed.retweet_count,
+				reply_count: currentFeed.reply_count,
+				quote_count: currentFeed.quote_count,
+				post_type: 'retweet',
+				parent_id: currentFeed._id,
+				conversation_id: currentFeed.conversation_id,
+				mentions: currentFeed.mentions,
+				visible_to: isSamegroups
+					? currentFeed.visible_to
+					: {
+							...currentFeed.visible_to,
+							users: currentFeed.visible_to.users.concat(
+								currentFeed.user_id
+							),
+					  },
 
-    userPosts = [currentUserData].concat(posts);
-    //console.logle.log("yyy",userPosts);
-    res.render('../views/feeds_page', {
-        posts: userPosts
-    });
+				author: currentUserName,
+				author_image: author_image_src,
+				receiver: receiverName,
+				receiver_id: recieverUser,
+				receiver_image: receiver_image_src,
+				count: 0,
+				author_id: req.user,
+				com_count: 0,
+				love_people: [],
+				retweet_edit_body: '',
+				retweet_edit_count: 0,
+				notification: '',
+			});
+
+			let status =
+				currentUserName + ' retweeted ' + user.username + '"s post.';
+
+			// Create notification for retweet
+			const notify = new Notifications({
+				inconn_id: currentUserID,
+				outconn_id: user._id,
+				post_id: feedId,
+				activity: 'retweet',
+				seen: false,
+				status: status,
+			});
+
+			try {
+				// Save notification
+				let nf = await newFeed.save();
+				req.session.activityPost = nf._id;
+				await notify.save();
+			} catch (err) {
+				let error = new Error('Something went wrong');
+				next(error);
+			}
+		}
+
+		// Like post
+		if (req.body.love) {
+			currentFeed = await Feeds.findById(feedId).populate('parent_id');
+			req.session.activityPost = currentFeed._id;
+			let user1 = await User.findOne({
+				user_id: currentFeed.user_id,
+			});
+			let user2;
+
+			// check if post type is 'retweet'
+			if (currentFeed.post_type == 'retweet') {
+				currentFeed = await Feeds.findById(currentFeed.parent_id._id);
+				user2 = await User.findOne({
+					user_id: currentFeed.user_id,
+				});
+			}
+
+			// increase like count
+			if (!currentFeed.liked_by.includes(currentUserData.username)) {
+				currentFeed.like_count++;
+				currentFeed.timestamp = Date.now();
+				currentFeed.liked_by.push(currentUserData.username);
+
+				// Save feed
+				await currentFeed.save();
+
+				// Create notification
+				let notifications = [
+					{
+						inconn_id: currentUserID,
+						outconn_id: user1._id,
+						post_id: feedId,
+						activity: 'like',
+						seen: false,
+						status:
+							currentUserName +
+							' liked ' +
+							user1.username +
+							'"s post.',
+					},
+				];
+
+				if (user2) {
+					notifications.push({
+						inconn_id: currentUserID,
+						outconn_id: user2._id,
+						post_id: feedId,
+						activity: 'like',
+						seen: false,
+						status:
+							currentUserName +
+							' liked ' +
+							user2.username +
+							'"s post.',
+					});
+				}
+
+				// Save to notifications
+				Notifications.insertMany(notifications);
+			}
+		}
+
+		// Like comment on post
+		if (req.body.love_com) {
+			currentFeed = await Feeds.findById(req.body.love_com);
+
+			let parentFeed = await Feeds.findById(currentFeed.parent_id);
+			parentFeed.timestamp = Date.now();
+			await parentFeed.save();
+
+			// Increase like count
+			if (!currentFeed.liked_by.includes(currentUserData.username)) {
+				currentFeed.like_count++;
+
+				currentFeed.liked_by.push(currentUserData.username);
+				// Save feed
+				await currentFeed.save();
+				req.session.activityPost = currentFeed._id;
+			}
+
+			// Find user with feed user_id
+			const user = await User.findOne({
+				user_id: currentFeed.user_id,
+			});
+
+			let status =
+				currentUserName + ' liked ' + user.username + '"s comment.';
+
+			// Create notification
+			const notify = new Notifications({
+				inconn_id: currentUserID,
+				outconn_id: user._id,
+				post_id: feedId,
+				activity: 'like',
+				seen: false,
+				status: status,
+			});
+			try {
+				// save notification
+				await notify.save();
+			} catch (err) {
+				let error = new Error('Something went wrong');
+				next(error);
+			}
+		}
+	} else {
+		let receiverName = currentUserName;
+
+		if (req.body.receiver != '') {
+			const user = await User.findOne({
+				username: req.body.receiver,
+			});
+			if (!user) return res.status(400).send('Receiver not found!');
+			receiverName = user.name;
+		}
+
+		let find_image_src = await User.findById(currentUserID);
+		let author_image_src = find_image_src.profile_pic;
+
+		// Get user mentions from post body
+		let user_mentions = [];
+		let post_body_parts = req.body.body.split(' ');
+		post_body_parts.forEach((part) => {
+			if (part.startsWith('@')) {
+				part = part.split('');
+				part.shift();
+				user_mentions.push(part.join('').trim());
+			}
+		});
+
+		req.user.getUserGroupMembers(
+			currentUserID,
+			async (groupUsers, groups) => {
+				groupUsers = groupUsers.map((user) => user.user_id);
+
+				req.session.newPostMade = true;
+
+				// Create new feed with type 'tweet'
+				let feed = {
+					user_id: currentUserData.user_id,
+					body: urlify(req.body.body),
+					created_at: Date.now(),
+					liked_by: [],
+					like_count: 0,
+					retweet_count: 0,
+					reply_count: 0,
+					quote_count: 0,
+					post_type: 'tweet',
+					parent_id: null,
+					conversation_id: null,
+					mentions: [...new Set(user_mentions)],
+					visible_to: { users: groupUsers, groups },
+					image: req.file ? req.file.location : 'null',
+
+					author: currentUserName,
+					author_image: author_image_src,
+					receiver: receiverName,
+					author_id: req.user,
+					count: 0,
+					love_count: 0,
+					com_count: 0,
+					love_people: [],
+					retweet_edit_body: '',
+					retweet_edit_count: 0,
+					notification: '',
+				};
+
+				const newFeed = new Feeds(feed);
+
+				try {
+					// Save to DB
+					let feed = await newFeed.save();
+
+					// Get user mentions in feed body
+					feed.getUserMentions(req.body.body);
+
+					feed.conversation_id = feed._id;
+					req.session.activityPost = feed._id;
+
+					// Update to feed
+					await feed.save();
+				} catch (err) {
+					let error = new Error('Something went wrong');
+					next(error);
+				}
+			}
+		);
+	}
+
+	// Get all posts from users
+	var posts = await getAllPosts(req.user._id);
+	var connection_list = await getAllConnectionInformation();
+	userPosts = [currentUserData].concat(posts);
+
+	let userGroups = [];
+	let user;
+	let userRedir;
+
+	if (feedId && (req.body.comment || req.body.love)) {
+		currentFeed = await Feeds.findById(feedId);
+		user = await User.findOne({
+			user_id: currentFeed.user_id,
+		});
+		userRedir = user;
+		let u = await User.findById(currentUserID);
+		userGroups = u.groups;
+	}
+
+	if (userGroups.length > 0) {
+		var feedNotificationProcessed = 0;
+		let notificationUsers = [];
+
+		userGroups.forEach(async (userGroup, index, array) => {
+			let group = await Group.findOne({ group_id: userGroup });
+			let group_users = await User.find({
+				group_id: { $in: [group.group_id] },
+				user_id: { $ne: user.user_id },
+			}).exec();
+
+			group_users = group_users.filter((member) => {
+				return (
+					JSON.stringify(member._id) != JSON.stringify(req.user._id)
+				);
+			});
+
+			group_users.forEach(async (member) => {
+				if (JSON.stringify(member) == JSON.stringify(user._id)) {
+					feedNotificationProcessed++;
+					if (feedNotificationProcessed === array.length) {
+						addComments();
+					}
+					return true;
+				}
+				notificationUsers.push(member);
+			});
+
+			feedNotificationProcessed++;
+			if (feedNotificationProcessed === array.length) {
+				let currentUser = await User.findById(currentUserID);
+				let found = currentFeed.visible_to.users.includes(
+					currentUser._id.toString()
+				);
+				let currentUserGroups = currentUser.groups;
+				let otherGroups = [];
+				let groupProccessed = 0;
+				currentUserGroups.forEach(async (grp, index, array) => {
+					let g = await Group.findOne({ group_id: grp });
+					otherGroups.push(g.group_name);
+					groupProccessed++;
+					if (groupProccessed == array.length) {
+						groupDOne();
+					}
+				});
+
+				notificationUsers = currentFeed.visible_to.users.concat(
+					notificationUsers.map((user) => user.user_id)
+				);
+
+				//check if user is from different group
+				let isFromSame = isHavingSameItems(
+					req.user.groups,
+					user.groups
+				);
+
+				async function groupDOne() {
+					otherGroups = otherGroups.concat(
+						currentFeed.visible_to.groups
+					);
+
+					if (
+						!found &&
+						JSON.stringify(currentUser._id) !=
+							JSON.stringify(user._id)
+					) {
+						let activity = '';
+						if (req.body.comment) activity = 'comment';
+						else if (req.body.retweet) activity = 'retweet';
+						else activity = 'love';
+						currentFeed.visible_to.users = [
+							...new Set(notificationUsers),
+						];
+						currentFeed.visible_to.groups = [
+							...new Set(otherGroups),
+						];
+						if (isFromSame) {
+							currentFeed.visible_to.userId = req.user._id;
+							currentFeed.visible_to.userActivity = activity;
+							currentFeed.timestamp = req.body.comment
+								? Date.now()
+								: currentFeed.timestamp;
+						}
+						await currentFeed.save();
+					}
+					addComments();
+				}
+			}
+		});
+	} else {
+		addComments();
+	}
+
+	// Added comments to post object
+	function addComments() {
+		var commentItemProcessed = 0;
+		userPosts = userPosts.map((post, index, array) => {
+			if (post._id) {
+				Comments.find({
+					feedId: post._id,
+				})
+					.populate('author_id')
+					.exec()
+					.then((comments) => {
+						nPosts.push({ ...post._doc, comments });
+						commentItemProcessed++;
+						if (commentItemProcessed === array.length) {
+							callback();
+						}
+					});
+			} else {
+				nPosts.push({ ...post, comments: [] });
+				commentItemProcessed++;
+				if (commentItemProcessed === array.length) {
+					callback();
+				}
+			}
+		});
+	}
+
+	function callback() {
+		// Sory posts
+		nPosts.sort(function (a, b) {
+			return b['timestamp'] - a['timestamp'];
+		});
+
+		if (req.body.timezone) {
+			res.redirect(`users/${userRedir._id}`);
+		} else {
+			global.nsp.emit('new-post', 'new-post');
+			res.redirect('users/home');
+		}
+	}
 });
 
-router.post('/profile', async (req, res) => {
-    //VALIDATE BEFORE CREATE
+// Post profile
+router.post('/profile', async (req, res, next) => {
+	sess = req.session;
+	sess.body = req.body;
 
-    sess = req.session;
-    console.log('Session signup');
-    sess.body = req.body;
-    console.log("Request body : ", req.body);
+	// Check if email exist
+	const emailExists = await User.findOne({
+		username: sess.body['username'],
+	});
+	if (emailExists)
+		return res
+			.status(400)
+			.send(
+				'Email already exists! Please signup with different Email address'
+			);
 
+	// Generate new hashed password
+	const salt = await bcrypt.genSalt(10);
+	const hashPassword = await bcrypt.hash(sess.body.password, salt);
 
-    //const {error} = registerValidation(sess.body);
-    //if(error) return res.status(400).send(error.details[0].message);
-
-    //Check if user already in DB
-    console.log('Find User');
-    const emailExists = await User.findOne({
-        username: sess.body['username']
-    });
-    if (emailExists) return res.status(400).send('Email already exists! Please signup with different Email address');
-
-    //HASH PASSWORD
-    console.log('Hash Pass');
-    const salt = await bcrypt.genSalt(10);
-    const hashPassword = await bcrypt.hash(sess.body.password, salt);
-    console.log("iiii", req.body);
-
-    //CREATE A NEW USER
-    const user = new User({
-        name: req.body['name'],
-        username: req.body['username'],
-        email: req.body['email'],
-        location: req.body['location'],
-        password: hashPassword,
-        bio: req.body['bio'],
-        image_src: req.body.image_src
-    });
-    try {
-        const savedUser = await user.save();
-        console.log("yyyy", savedUser);
-
-        res.render('../views/login_succ');
-        //res.send({user: user._id});
-
-    } catch (err) {
-
-        res.status(400).send(err);
-    }
+	// new user object
+	const user = new User({
+		name: req.body['name'],
+		username: req.body['username'],
+		email: req.body['email'],
+		location: req.body['location'],
+		password: hashPassword,
+		bio: req.body['bio'],
+		image_src: req.body.image_src,
+	});
+	try {
+		// Save to DB
+		const savedUser = await user.save();
+		res.render('../views/login_succ');
+	} catch (err) {
+		let error = new Error('Something went wrong');
+		next(error);
+	}
 });
 
-
-
-router.post('/retweet', async (req, res) => {
-
-
-    }
-
-)
-
-//LOGIN
+// Post login
 router.post('/login', async (req, res) => {
-    //VALIDATE BEFORE CREATE
-    const {
-        error
-    } = loginValidation(req.body);
-    if (error) return res.status(400).send(error.details[0].message)
+	req.session.activityPost = null;
 
-    //Check if email is correct
-    const user = await User.findOne({
-        email: req.body.email
-    });
-    if (!user) return res.status(400).send('Email not found!');
+	// Validate user inputs
+	const { error } = loginValidation(req.body);
 
-    //check if password is correct
-    const validPass = await bcrypt.compare(req.body.password, user.password);
-    if (!validPass) return res.status(400).send('Invalid password')
+	if (error) {
+		return res.status(422).render('./../views/login.ejs', {
+			pageTitle: 'Login',
+			message: error.details[0].message,
+			input: { email: req.body.email },
+		});
+	}
 
-    //CREATE A TOKEN
-    const token = jwt.sign({
-        _id: user._id
-    }, process.env.TOKEN_SECRET);
-    res.header('auth_token', token).send(token);
+	// Find user with email
+	const user = await User.findOne({
+		EmailID: req.body.email,
+	});
+	// throw error if user not found
+	if (!user) {
+		return res.status(403).render('./../views/login.ejs', {
+			pageTitle: 'Login',
+			message: 'Invalid email address or password',
+			input: { email: req.body.email },
+		});
+	}
+	// Validate password
+	if (!user.password)
+		return res.status(403).render('./../views/login.ejs', {
+			pageTitle: 'Login',
+			message: 'Invalid email address or password',
+			input: { email: req.body.email },
+		});
 
-    res.send('Logged in!');
+	// Cross verifiy password
+	const validPass = await bcrypt.compare(req.body.password, user.password);
+	if (!validPass) {
+		return res.status(403).render('./../views/login.ejs', {
+			pageTitle: 'Login',
+			message: 'Invalid email address or password',
+			input: { email: req.body.email },
+		});
+	}
+
+	//Logger for user login time
+	let log = new Logger({
+		user: {
+			id: user._id,
+			username: user.username,
+			name: user.name,
+		},
+		loggedInAt: {
+			serverTime: new Date(),
+			userTime: new Date().toLocaleString('en-US', {
+				timeZone: req.body.timezone || 'America/New_York',
+			}),
+		},
+	});
+	// Save it to DB
+	log.save();
+
+	currentUserID = user._id;
+	req.session.user = user;
+	req.session.isLoggedIn = true;
+	req.session.notificationViewed = false;
+	const salt = user.salt;
+	currentUserName = user.username;
+
+	// User object
+	currentUserData = {
+		username: user.username,
+		name: user.name,
+		bio: user.bio,
+		location: user.location,
+		connection: user.connection,
+		image_src: user.profile_pic,
+		user_id: user.user_id,
+	};
+
+	var map = new Map(); // only because unsued variables are part of humanity!
+	var connection_list = []; //await getAllConnectionInformation();
+
+	var posts = await getAllPosts(user._id);
+	userPosts = [currentUserData].concat(posts);
+
+	var itemsProcessed = 0;
+
+	let nPosts = [];
+
+	// Get all user post with comments
+	userPosts = userPosts.map((post, index, array) => {
+		if (post._id) {
+			Comments.find({
+				feedId: post._id,
+			})
+				.populate('author_id')
+				.exec()
+				.then((comments) => {
+					nPosts.push({ ...post._doc, comments });
+					itemsProcessed++;
+					if (itemsProcessed === array.length) {
+						callback();
+					}
+				});
+		} else {
+			nPosts.push({ ...post, comments: [] });
+			itemsProcessed++;
+			if (itemsProcessed === array.length) {
+				callback();
+			}
+		}
+	});
+
+	// Render template
+	function callback() {
+		nPosts.sort(function (a, b) {
+			return b['timestamp'] - a['timestamp'];
+		});
+		res.redirect('users/home');
+	}
 });
 
-router.get('/logout', function logout(req, res) {
-    //console.logle.log('Logout clicked');
-    res.redirect('/idlogin');
-});
-router.post('/profile', async (req, res) => {
-    //VALIDATE BEFORE CREATE
+// User logout
+router.post('/logout', async (req, res, next) => {
+	//Logger for user logout time
 
-    sess = req.session;
-    //console.logle.log('Session signup');
-    sess.body = req.body;
-    //console.logle.log("Request body : ",req.body);
+	if (req.user) {
+		let log = await Logger.findOne({ 'user.id': req.user._id }).sort([
+			['loggedInAt', -1],
+		]);
 
-
-    //const {error} = registerValidation(sess.body);
-    //if(error) return res.status(400).send(error.details[0].message);
-
-    //Check if user already in DB
-    //console.logle.log('Find User');
-    const emailExists = await User.findOne({
-        username: sess.body['username']
-    });
-    if (emailExists) return res.status(400).send('Email already exists!');
-
-    //HASH PASSWORD
-    //console.logle.log('Hash Pass');
-
-
-    const salt = await bcrypt.genSalt(10);
-
-    const hashPassword = await bcrypt.hash(sess.body.password, salt);
-
-    //CREATE A NEW USER
-    const user = new User({
-        name: req.body['name'],
-        username: req.body['username'],
-        email: req.body['email'],
-        salt: salt,
-        password: hashPassword,
-        bio: req.body['bio']
-    });
-    try {
-        const savedUser = await user.save();
-        res.send({
-            user: user._id
-        });
-
-    } catch (err) {
-        res.status(400).send(err);
-    }
+		if (log) {
+			log.loggedOutAt.serverTime = new Date();
+			log.loggedOutAt.userTime = new Date().toLocaleString('en-US', {
+				timeZone: req.body.timezone || 'America/New_York',
+			});
+			log.save();
+		}
+	}
+	// Destroy session and return to login screen
+	req.session.destroy((err) => {
+		res.redirect('/');
+	});
 });
 
+// Handle post profile
+router.post('/profile', async (req, res, next) => {
+	sess = req.session;
+	sess.body = req.body;
+	const emailExists = await User.findOne({
+		username: sess.body['username'],
+	});
+	if (emailExists) return res.status(400).send('Email already exists!');
 
+	// Generate new hashed password
+	const salt = await bcrypt.genSalt(10);
+	const hashPassword = await bcrypt.hash(sess.body.password, salt);
 
-// router.post('/login');
+	// Create user object
+	const user = new User({
+		name: req.body['name'],
+		username: req.body['username'],
+		email: req.body['email'],
+		salt: salt,
+		password: hashPassword,
+		bio: req.body['bio'],
+	});
+	try {
+		// Save to DB
+		await user.save();
+		res.send({
+			user: user._id,
+		});
+	} catch (err) {
+		let error = new Error('Something went wrong');
+		next(error);
+	}
+});
+
+// Get user login
+router.get('/', authController.getLogin);
+
+// Get user sign up
+router.get('/signup', authController.getSignupStepOne);
+
+// Get user signup two
+router.get('/signup-complete', authController.getSignupStepTwo);
+
+// Post user signup
+router.post('/sign-up', authController.getCheckUser);
+
+// Post user create
+router.post('/create-user', authController.postCreateUser);
 
 module.exports = router;
